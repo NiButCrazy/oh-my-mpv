@@ -114,7 +114,7 @@ local function render()
     local pos = mp.get_property_native("mouse-pos")
     local cursor = "窗口外"
     if pos and pos.hover == true and pos.x and pos.y then
-        cursor = string.format("px %d,%d · rel %.2f,%.2f",
+        cursor = string.format("px %d,%d - rel %.2f,%.2f",
             iround(pos.x), iround(pos.y), pos.x / w, pos.y / h)
     end
 
@@ -162,15 +162,16 @@ local function render()
     -- 标题行最后画，保证永远压在最上层
     local status
     if #regions == 0 then
-        status = "尚无区域记录 · 先触发一次绑定"
+        status = "尚无区域记录 - 先触发一次绑定"
     else
-        status = string.format("%d 个区域 · 命中 %d · 鼠标 %s", #regions, hits, cursor)
+        status = string.format("鼠标 %s  |  命中 %d  |  %d 个区域", cursor, hits, #regions)
     end
-    out[#out + 1] = string.format("{\\an7\\pos(10,%d)\\fs%d\\bord2\\3c%s\\3a%s}%s%s%s",
-        math.floor(fs * 0.35), fs, C.outline.rgb, C.outline.alpha,
-        span(C.text, "Oh My MPV", "\\b1"),
-        span(C.text_dim, "  v" .. VERSION, "\\b0"),
-        span(C.text_dim, "      ·      " .. ass_escape(status), "\\b0"))
+    -- 标题行放右上角（\an9 右对齐），信息自右向左：名称、版本、状态
+    out[#out + 1] = string.format("{\\an9\\pos(%d,%d)\\fs%d\\bord2\\3c%s\\3a%s}%s%s%s",
+        w - 10, math.floor(fs * 0.35), fs, C.outline.rgb, C.outline.alpha,
+        span(C.text_dim, ass_escape(status), "\\b0"),
+        span(C.text_dim, "   ·   v" .. VERSION, "\\b0"),
+        span(C.text, "   OH MY MPV", "\\b1"))
 
     debug_overlay.data = table.concat(out, "\n")
     debug_overlay:update()
