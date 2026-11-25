@@ -1,4 +1,4 @@
--- Oh My MPV v0.1.0 (https://github.com/NiButCrazy/Oh-My-MPV)
+-- Oh My MPV v0.1.0 (https://github.com/NiButCrazy/oh-my-mpv)
 
 local utils = require "mp.utils"
 
