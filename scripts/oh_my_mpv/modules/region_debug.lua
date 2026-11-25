@@ -10,7 +10,9 @@ local VERSION = require "modules.version"
 
 local M = {}
 
-local regions = RegionExec.regions()
+local MAX_MEMBERS = 5      -- 每个区域最多展开几条绑定
+
+local zones = RegionExec.zones()
 local debug_on = false
 local debug_observed = false
 local debug_overlay = mp.create_osd_overlay("ass-events")
@@ -60,6 +62,16 @@ local function span(c, text, extra)
     return string.format("{\\1c%s\\1a%s%s}%s", c.rgb, c.alpha, extra or "", text)
 end
 
+-- 一整行 ASS 文本事件
+local function text_event(x, y, fs, segs)
+    local body = {}
+    for i, s in ipairs(segs) do
+        body[i] = span(s[1], s[2])
+    end
+    return string.format("{\\an7\\pos(%d,%d)\\fs%d\\bord2\\3c%s\\3a%s}%s",
+        x, y, fs, C.outline.rgb, C.outline.alpha, table.concat(body))
+end
+
 -- 命令着色：分支前缀（内/外）标出当前会走哪一支，命令文本没有执行过就是灰色，执行过后变激活色。
 local function cmd_segments(hit_now, active, prefix, cmd)
     return {
@@ -68,27 +80,18 @@ local function cmd_segments(hit_now, active, prefix, cmd)
     }
 end
 
--- 一条区域的标签：序号+坐标中性色，内/外两条命令各自着色。
-local function label_event(x, y, fs, r, idx, hit, in_active, out_active)
-    local segs = {
-        { C.text, string.format("%d. %s", idx, ass_escape(r.label)) },
-    }
-    for _, s in ipairs(cmd_segments(hit, in_active, "  |  区域内:", r.inside)) do
+-- 一条绑定的两行内容：区域内 + 区域外
+local function member_segments(m, hit, in_active, out_active)
+    local segs = {}
+    for _, s in ipairs(cmd_segments(hit, in_active, "    区域内:", m.inside)) do
         segs[#segs + 1] = s
     end
-    if r.outside then
-        for _, s in ipairs(cmd_segments(not hit, out_active, "  |  区域外:", r.outside)) do
+    if m.outside then
+        for _, s in ipairs(cmd_segments(not hit, out_active, "  |  区域外:", m.outside)) do
             segs[#segs + 1] = s
         end
     end
-
-    local body = {}
-    for i, s in ipairs(segs) do
-        body[i] = span(s[1], s[2])
-    end
-
-    return string.format("{\\an7\\pos(%d,%d)\\fs%d\\bord2\\3c%s\\3a%s}%s",
-        x, y, fs, C.outline.rgb, C.outline.alpha, table.concat(body))
+    return segs
 end
 
 -- 激活色到期后重绘一次，让颜色自己退回默认色。
@@ -133,18 +136,20 @@ local function render()
 
     local fs = math.max(12, math.min(48, math.floor(h / 36)))
     local head_h = math.floor(fs * 1.8)
+    local line_h = math.floor(fs * 1.45)
 
     local out = {}
     local hits = 0
-    for i, r in ipairs(regions) do
-        local x0, y0, x1, y1 = RegionExec.rect_to_px(r.mode, r.x0, r.y0, r.x1, r.y1, w, h)
+
+    for zi, z in ipairs(zones) do
+        local x0, y0, x1, y1 = RegionExec.rect_to_px(z.mode, z.x0, z.y0, z.x1, z.y1, w, h)
         if x0 then
             local hit = RegionExec.mouse_in_rect(x0, y0, x1, y1)
             if hit then hits = hits + 1 end
             local border = hit and C.border_hit or C.border_idle
             local fill = hit and C.fill_hit or C.fill_idle
 
-            -- 矩形：填充色/透明度与边框色都可配
+            -- 矩形只画一次：同一块区域下的多个按键共用
             out[#out + 1] = string.format(
                 "{\\an7\\pos(0,0)\\p1\\bord2\\1c%s\\1a%s\\3c%s\\3a%s}m %d %d l %d %d %d %d %d %d",
                 fill.rgb, fill.alpha, border.rgb, border.alpha,
@@ -154,19 +159,45 @@ local function render()
             -- 标签锚定区域左上角；顶到屏幕边时让开标题行
             local lx = iround(x0) + 8
             local ly = math.max(head_h + 4, math.min(iround(y0) + 6, h - fs - 6))
-            out[#out + 1] = label_event(lx, ly, fs, r, i, hit,
-                active_now(r.active_inside_at), active_now(r.active_outside_at))
+
+            -- 默认从区域顶部往下排；下方放不下整个块时改为向上展开
+            local block_h = (1 + math.min(#z.members, MAX_MEMBERS)) * line_h
+            if ly + block_h > h - 4 then
+                local alt = math.min(iround(y0), h) - block_h - 4
+                if alt >= head_h + 4 then ly = alt end
+            end
+
+            -- 头行：序号 + 原始坐标写法（多条绑定时标出数量）
+            local head = string.format("%d. %s", zi, z.label)
+            if #z.members > 1 then
+                head = head .. string.format("  ➔  %d 个绑定", #z.members)
+            end
+            out[#out + 1] = text_event(lx, ly, fs, { { C.text, head } })
+
+            -- 成员行：屏幕放得下多少就展开多少
+            local room = math.max(0, math.floor((h - ly - fs) / line_h) - 1)
+            local shown = math.min(#z.members, MAX_MEMBERS, room)
+
+            for mi = 1, shown do
+                local m = z.members[mi]
+                out[#out + 1] = text_event(lx, ly + mi * line_h, fs,
+                    member_segments(m, hit,
+                        active_now(m.active_inside_at), active_now(m.active_outside_at)))
+            end
+            if #z.members > shown then
+                out[#out + 1] = text_event(lx, ly + (shown + 1) * line_h, fs,
+                    { { C.text_dim, string.format("    … 另 %d 个绑定", #z.members - shown) } })
+            end
         end
     end
 
     -- 标题行最后画，保证永远压在最上层
     local status
-    if #regions == 0 then
+    if #zones == 0 then
         status = "尚无区域记录 - 先触发一次绑定"
     else
-        status = string.format("鼠标 %s  |  命中 %d  |  %d 个区域", cursor, hits, #regions)
+        status = string.format("%s  |  命中 %d  |  %d 个区域", cursor, hits, #zones)
     end
-    -- 标题行放右上角（\an9 右对齐），信息自右向左：名称、版本、状态
     out[#out + 1] = string.format("{\\an9\\pos(%d,%d)\\fs%d\\bord2\\3c%s\\3a%s}%s%s%s",
         w - 10, math.floor(fs * 0.35), fs, C.outline.rgb, C.outline.alpha,
         span(C.text_dim, ass_escape(status), "\\b0"),
@@ -175,7 +206,7 @@ local function render()
 
     debug_overlay.data = table.concat(out, "\n")
     debug_overlay:update()
-    mp.msg.verbose(string.format("region-exec-debug: 绘制 %d 个区域，命中 %d", #regions, hits))
+    mp.msg.verbose(string.format("region-exec-debug: 绘制 %d 个区域，命中 %d", #zones, hits))
 
     if expire_at then schedule_repaint(expire_at) end
 end
@@ -204,7 +235,7 @@ local function set_on(on)
         debug_overlay:update()
     end
     mp.msg.info(string.format("region-exec-debug: %s（已记录 %d 个区域）",
-        debug_on and "开启" or "关闭", #regions))
+        debug_on and "开启" or "关闭", #zones))
 end
 
 -- 供 region-exec 在记录新区域或执行命令后调用；debug 未开启时什么都不做。

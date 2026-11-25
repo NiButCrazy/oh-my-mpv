@@ -1,13 +1,15 @@
 -- 区域命令劫持：同一个按键按鼠标位置分派到不同命令。
 -- 协议见 main.lua 头部；本模块只负责解析参数、判定命中、执行命令、记录区域。
+-- 记录以"矩形"为单位（zone），同一矩形下的不同命令作为成员挂在 zone 上，
+-- 这样多个按键绑到同一块区域时，调试视图只画一个矩形、成员逐行列出。
 
 local Notify = require "modules.notify"
 
 local M = {}
 
-local regions = {}        -- 已触发过的区域，调试视图据此绘制
-local region_by_key = {}  -- 去重 + 命中后就地标记"已执行过"
-local on_change = nil     -- 区域记录/激活后的回调（由调试视图挂载）
+local zones = {}        -- 区域列表（按矩形去重），供调试视图绘制
+local zone_by_key = {}  -- 矩形 key -> zone
+local on_change = nil   -- 区域/成员变化或命令执行后的回调（由调试视图挂载）
 
 -- 执行单条命令字符串；空命令忽略。命令失败只记日志，不影响后续按键。
 local function run_command(cmd)
@@ -47,26 +49,37 @@ local function mouse_in_rect(x0, y0, x1, y1)
     return pos.x >= x0 and pos.x <= x1 and pos.y >= y0 and pos.y <= y1
 end
 
--- 记住用过的区域（去重），供调试视图显示；返回该区域对象与是否新建。
-local function record_region(mode, a, x0, y0, x1, y1)
+-- 记录一次调用：按矩形归并 zone，再按 (区内命令, 区外命令) 归并成员。
+-- 返回 zone、成员、以及是否新建了 zone 或成员。
+local function record(mode, a, x0, y0, x1, y1)
     if x0 > x1 then x0, x1 = x1, x0 end
     if y0 > y1 then y0, y1 = y1, y0 end
-    local key = table.concat({ mode, x0, y0, x1, y1, a[6], a[8] or "" }, "\1")
-    local existing = region_by_key[key]
-    if existing then return existing, false end
 
-    local r = {
-        mode = mode,
-        x0 = x0, y0 = y0, x1 = x1, y1 = y1,
-        label = table.concat({ a[1], a[2], a[3], a[4], a[5] }, " "),
-        inside = a[6],
-        outside = a[8],
-        active_inside_at = nil,   -- 区域内命令最近一次执行的时刻
-        active_outside_at = nil,  -- 区域外命令最近一次执行的时刻
-    }
-    regions[#regions + 1] = r
-    region_by_key[key] = r
-    return r, true
+    local zkey = table.concat({ mode, x0, y0, x1, y1 }, "\1")
+    local z = zone_by_key[zkey]
+    local created = false
+    if not z then
+        z = {
+            mode = mode,
+            x0 = x0, y0 = y0, x1 = x1, y1 = y1,
+            label = table.concat({ a[1], a[2], a[3], a[4], a[5] }, " "),
+            members = {},
+            member_by_key = {},
+        }
+        zone_by_key[zkey] = z
+        zones[#zones + 1] = z
+        created = true
+    end
+
+    local mkey = table.concat({ a[6], a[8] or "" }, "\2")
+    local m = z.member_by_key[mkey]
+    if not m then
+        m = { inside = a[6], outside = a[8] }
+        z.member_by_key[mkey] = m
+        z.members[#z.members + 1] = m
+        created = true
+    end
+    return z, m, created
 end
 
 local function notify_change()
@@ -93,14 +106,14 @@ function M.handle(...)
 
     local w, h = get_osd_size()
     local px0, py0, px1, py1 = rect_to_px(mode, x0, y0, x1, y1, w, h)
-    local r, created = record_region(mode, a, x0, y0, x1, y1)
+    local _, m, created = record(mode, a, x0, y0, x1, y1)
 
     if px0 and mouse_in_rect(px0, py0, px1, py1) then
-        r.active_inside_at = mp.get_time()
+        m.active_inside_at = mp.get_time()
         run_command(a[6])
         notify_change()
     elseif #a == 8 then
-        r.active_outside_at = mp.get_time()
+        m.active_outside_at = mp.get_time()
         run_command(a[8])
         notify_change()
     elseif created then
@@ -112,8 +125,8 @@ function M.set_on_change(fn)
     on_change = fn
 end
 
-function M.regions()
-    return regions
+function M.zones()
+    return zones
 end
 
 M.osd_size = get_osd_size
