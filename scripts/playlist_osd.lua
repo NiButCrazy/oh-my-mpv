@@ -90,7 +90,7 @@ local settings = {
 }
 
 local opts = require("mp.options")
-opts.read_options(settings, nil, function(list) update_opts(list) end)
+opts.read_options(settings, "playlist_osd")
 
 local utils = require("mp.utils")
 local msg = require("mp.msg")
