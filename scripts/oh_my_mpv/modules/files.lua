@@ -1,20 +1,11 @@
--- Oh My MPV v0.1.0 (https://github.com/NiButCrazy/oh-my-mpv)
+-- 打开文件 / 打开文件夹：借 PowerShell 的系统对话框取路径，再交给 mpv 加载。
 
 local utils = require "mp.utils"
 
+local M = {}
 
--- 播放/暂停。播放停到结尾（eof-reached）且处于暂停时从头重新播放。
-local function play_pause()
-    if mp.get_property_native("eof-reached") then
-        mp.commandv("seek", 0, "absolute-percent")
-        mp.commandv("set", "pause", "no")
-    else
-        mp.commandv("cycle", "pause")
-    end
-end
-
-
-
+-- 弹出对话框期间临时取消置顶，避免对话框被窗口挡住。
+-- 返回标准输出的文本；用户取消或失败时返回 nil。
 local function invoke_dialog(ps_command)
     local was_ontop = mp.get_property_native("ontop")
     if was_ontop then mp.set_property_native("ontop", false) end
@@ -33,7 +24,8 @@ local function invoke_dialog(ps_command)
     end
 end
 
-local function open_files()
+-- 多选文件：第一个 replace，其余 append。
+function M.open_files()
     local stdout = invoke_dialog([[
         Add-Type -AssemblyName PresentationFramework
         $ofd = New-Object Microsoft.Win32.OpenFileDialog
@@ -60,8 +52,8 @@ local function open_files()
     end
 end
 
-
-local function open_folder()
+-- 选一个文件夹，整目录交给 mpv 播放。
+function M.open_folder()
     local stdout = invoke_dialog([[
         Add-Type -AssemblyName System.Windows.Forms
         $fbd = New-Object System.Windows.Forms.FolderBrowserDialog
@@ -82,6 +74,4 @@ local function open_folder()
     mp.commandv("loadfile", dir)
 end
 
-mp.add_key_binding(nil, "open_files", open_files)
-mp.add_key_binding(nil, "open_folder", open_folder)
-mp.add_key_binding(nil, "play_pause", play_pause)
+return M
