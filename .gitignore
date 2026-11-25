@@ -5,3 +5,5 @@ assets
 vulkan-1.dll
 shaders
 vs
+.luarc.json
+mpv_luameta
