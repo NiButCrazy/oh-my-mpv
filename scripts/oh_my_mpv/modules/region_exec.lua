@@ -14,6 +14,8 @@ local on_change = nil   -- 区域/成员变化或命令执行后的回调（由�
 -- 执行单条命令字符串；空命令忽略。命令失败只记日志，不影响后续按键。
 local function run_command(cmd)
     if cmd == nil or cmd == "" then return end
+    -- mpv 的 ignore 是空操作，直接跳过，省一次命令调用（约占单次开销的一半）
+    if cmd == "ignore" then return end
     local ok, err = mp.command(cmd)
     if not ok then
         Notify.error("region-exec: 命令执行失败: " .. tostring(err))
