@@ -20,6 +20,49 @@ local function run_command(cmd)
     end
 end
 
+-- input.conf 里的 ${prop} 会在到达脚本之前就被 mpv 展开成具体值，
+-- 导致每次按键命令文本都不同、调试视图重复记录。要求写成 $${prop}。
+-- 绑定只扫描一次，问题缓存下来，之后每次触发都重新报一遍。
+local bindings_checked = false
+local binding_error = nil
+
+local function check_bindings()
+    if bindings_checked then return end
+    bindings_checked = true
+
+    local list = mp.get_property_native("input-bindings")
+    if type(list) ~= "table" then return end
+
+    local bad = {}
+    for _, b in ipairs(list) do
+        local cmd = b.cmd or ""
+        if cmd:find("region-exec", 1, true) then
+            local from = 1
+            while true do
+                local pos = cmd:find("${", from, true)
+                if not pos then break end
+                if cmd:sub(pos - 1, pos - 1) ~= "$" then
+                    local stop = cmd:find("}", pos, true) or pos
+                    bad[#bad + 1] = string.format("%s … %s", tostring(b.key), cmd:sub(pos, stop))
+                    break
+                end
+                from = pos + 2
+            end
+        end
+    end
+
+    if #bad > 0 then
+        binding_error = "regionxec: 以下命令导致重复绑定 ➔ ${...} 请写成 ➔ $${...} ▶ "
+            .. table.concat(bad, " | ")
+    end
+end
+
+-- input.conf 运行时重载后重新扫描，避免沿用旧结论
+mp.observe_property("input-bindings", "none", function()
+    bindings_checked = false
+    binding_error = nil
+end)
+
 -- 取 OSD 像素尺寸；没有有效视频输出时返回 0。
 local function get_osd_size()
     local dim = mp.get_property_native("osd-dimensions")
@@ -89,6 +132,9 @@ end
 -- script-message region-exec 的入口。
 function M.handle(...)
     local a = { ... }
+    check_bindings()
+    if binding_error then Notify.error(binding_error) end
+
     if #a ~= 6 and not (#a == 8 and a[7] == "--") then
         Notify.error("region-exec: 用法 region-exec <rel|px> <x0> <y0> <x1> <y1> \"<区域内命令>\" [-- \"<区域外命令>\"]")
         return
@@ -101,6 +147,26 @@ function M.handle(...)
     local x0, y0, x1, y1 = tonumber(a[2]), tonumber(a[3]), tonumber(a[4]), tonumber(a[5])
     if not (x0 and y0 and x1 and y1) then
         Notify.error("region-exec: 坐标必须是数字")
+        return
+    end
+    if x0 == x1 or y0 == y1 then
+        Notify.error("region-exec: 矩形面积为 0（x0 == x1 或 y0 == y1）")
+        return
+    end
+    if mode == "rel" then
+        local lo, hi = math.min(x0, x1), math.max(x0, x1)
+        local lo_y, hi_y = math.min(y0, y1), math.max(y0, y1)
+        if lo < 0 or hi > 1 or lo_y < 0 or hi_y > 1 then
+            Notify.error(string.format(
+                "region-exec: rel 坐标必须在 0..1 之间（当前 %s %s %s %s）", a[2], a[3], a[4], a[5]))
+            return
+        end
+    elseif x0 < 0 or y0 < 0 or x1 < 0 or y1 < 0 then
+        Notify.error("region-exec: px 坐标不能为负")
+        return
+    end
+    if a[6] == nil or a[6] == "" then
+        Notify.error("region-exec: 区域内命令不能为空")
         return
     end
 
