@@ -114,7 +114,7 @@ local function render()
     local pos = mp.get_property_native("mouse-pos")
     local cursor = "窗口外"
     if pos and pos.hover == true and pos.x and pos.y then
-        cursor = string.format("px %d,%d - rel %.2f,%.2f",
+        cursor = string.format("%d, %d px %.2f, %.2f rel",
             iround(pos.x), iround(pos.y), pos.x / w, pos.y / h)
     end
 
