@@ -151,9 +151,13 @@ local function render()
 
         local rows = { text_event(lx, ly, fs, { { C.text, head } }) }
 
-        -- 成员行：屏幕放得下多少就展开多少
-        local room = math.max(0, math.floor((h - ly - fs) / line_h) - 1)
+        -- 成员行：屏幕放得下多少就展开多少；要折叠时先给 "另 N 个绑定" 提示行让出一行
+        local room = math.max(0, math.floor((h - ly - fs) / line_h))
         local shown = math.min(#z.members, MAX_MEMBERS, room)
+        if #z.members > shown then
+            room = math.max(0, room - 1)
+            shown = math.min(#z.members, MAX_MEMBERS, room)
+        end
         for mi = 1, shown do
             local m = z.members[mi]
             rows[#rows + 1] = text_event(lx, ly + mi * line_h, fs,
@@ -174,7 +178,7 @@ local function render()
 
     -- 第一遍：只画矩形，同时把标签项按锚点分组留到第二遍
     for zi, z in ipairs(zones) do
-        local x0, y0, x1, y1 = RegionExec.rect_to_px(z.mode, z.x0, z.y0, z.x1, z.y1, w, h)
+        local x0, y0, x1, y1 = RegionExec.rect_to_px(z.coords, w, h)
         if x0 then
             local hit = RegionExec.mouse_in_rect(x0, y0, x1, y1)
             if hit then hits = hits + 1 end
@@ -210,10 +214,15 @@ local function render()
             -- 单块组保持原布局：从区域顶部往下排，下方放不下时改为向上展开
             local it = g.items[1]
             local ly = math.max(head_h + 4, math.min(it.ay + 6, h - fs - 6))
-            local block_h = (1 + math.min(#it.z.members, MAX_MEMBERS)) * line_h
-            if ly + block_h > h - 4 then
-                local alt = math.min(it.ay, h) - block_h - 4
-                if alt >= head_h + 4 then ly = alt end
+            local want = math.min(#it.z.members, MAX_MEMBERS)
+            if #it.z.members > MAX_MEMBERS then want = want + 1 end  -- 折叠提示行也要放得下
+            -- 与 render_block 同一判据：容量 = 该 y 之下还能放几行（含字号余量）
+            local function capacity(y)
+                return math.max(0, math.floor((h - y - fs) / line_h))
+            end
+            if capacity(ly) < want then
+                local alt = math.min(it.ay, h) - (1 + want) * line_h - 4
+                if alt >= head_h + 4 and capacity(alt) >= want then ly = alt end
             end
             local rows = render_block(it, nil, nil, ly)
             for _, r in ipairs(rows) do out[#out + 1] = r end
@@ -221,7 +230,8 @@ local function render()
             -- 多块组：从公共锚点向下堆叠，放不下时从末尾折叠成一行提示
             local plan = {}
             for i, it in ipairs(g.items) do
-                plan[i] = { it = it, lines = 1 + math.min(#it.z.members, MAX_MEMBERS) }
+                local n = #it.z.members
+                plan[i] = { it = it, lines = 1 + math.min(n, MAX_MEMBERS) + (n > MAX_MEMBERS and 1 or 0) }
             end
 
             local base = math.max(head_h + 4, math.min(g.ay + 6, h - fs - 6))
