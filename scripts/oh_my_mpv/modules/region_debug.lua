@@ -143,7 +143,7 @@ local function render()
     local function render_block(it, prefix, suffix, ly)
         local z = it.z
         local lx = it.ax + 8
-        local head = (prefix or "") .. string.format("%d. %s", it.zi, z.label)
+        local head = (prefix or "") .. string.format(" %d  ➔  %s", it.zi, z.label)
         if #z.members > 1 then
             head = head .. string.format("  ➔  %d 个绑定", #z.members)
         end
