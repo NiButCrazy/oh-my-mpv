@@ -53,6 +53,12 @@ WHEEL_DOWN script-message-to oh_my_mpv region-exec rel 0 0.2 0.2 1 "add volume -
 # 画面下半区左键全屏，上半区照常播放/暂停
 MBTN_LEFT script-message-to oh_my_mpv region-exec rel 0 0.5 1 1 "cycle fullscreen" -- "script-binding oh_my_mpv/play_pause"
 
+# 窗口底部 100px 高的控制条
+WHEEL_UP script-message-to oh_my_mpv region-exec mix 0 1r-100p 1r 1r "add volume 1" -- "ignore"
+
+# 左右各留 20px
+MBTN_LEFT script-message-to oh_my_mpv region-exec mix 20p 0 1r-20p 1r "ignore" -- "script-binding oh_my_mpv/play_pause"
+
 # F3 开关调试视图
 F3 script-message-to oh_my_mpv region-exec-debug toggle
 ```
@@ -73,23 +79,26 @@ F3 script-message-to oh_my_mpv region-exec-debug toggle
 ## 语法
 
 ```
-KEY script-message-to oh_my_mpv region-exec <rel|px> <x0> <y0> <x1> <y1> "<区域内命令>" [-- "<区域外命令>"]
+KEY script-message-to oh_my_mpv region-exec <rel|px|mix> <x0> <y0> <x1> <y1> "<区域内命令>" [-- "<区域外命令>"]
 ```
 
 | 参数 | 说明 |
 |---|---|
 | `rel` | 相对 `osd-dimensions` 的 0..1 比例，跟随窗口大小 / DPI / 全屏缩放，**推荐** |
 | `px` | OSD 像素坐标，与 `mouse-pos` 同一坐标系（不是 modernz 的 ASS 虚拟画布） |
+| `mix` | 每个坐标写 `值[单位]`，单位 `r` / `p`，无单位按 `rel`；支持 `a±b`（只两个项，不能有空格、括号、前导负号）。如 `1r-10p` = 距底边 10px，`20p` / `1r-20p` = 左右各留 20px |
 | `"<区域内命令>"` | 鼠标落在矩形内时执行；必须整体加引号，才能保留空格、`;` 多命令和 `no-osd` 等前缀 |
 | `-- "<区域外命令>"` | 可选；省略时区域外的按键被**静默吞掉**（这就是"劫持"） |
 
 ### 坐标与命中规则
 
 1. `rel` 乘 `osd-dimensions` 得到像素矩形；`px` 直接使用，与 `mouse-pos` 同一坐标系。
-2. 坐标自动归一化：`x0 > x1` 或 `y0 > y1` 时交换两端（`rect_to_px`、`record` 各做一次），所以两种写法记录成同一个区域。
+2. 坐标自动归一化：`x0 > x1` 或 `y0 > y1` 时交换两端（`rect_to_px`、`record` 各做一次），所以两种写法记录成同一个区域。`mix` 的归一化按 `(rel, px)` 字典序（先比 `rel` 再比 `px`，与窗口尺寸无关），渲染阶段再按像素归一化。
 3. 命中是闭区间（边界上的点算命中）；指针不在窗口内（`hover ~= true`）一律算区域外。
 4. 没有有效 OSD 尺寸（未加载视频 / 无 VO）时 `rel` 区域一律按区域外处理；`px` 不依赖尺寸。
-5. 记录以矩形为单位去重：同 `mode` + 同归一化坐标只建一个 zone，其下按 `(区内命令, 区域外命令)` 去重出成员。所以多个按键绑同一矩形时，调试视图只画一个矩形、命令逐行列出。
+5. 记录以矩形为单位去重：同归一化坐标只建一个 zone，其下按 `(区内命令, 区域外命令)` 去重出成员。所以多个按键绑同一矩形时，调试视图只画一个矩形、命令逐行列出。
+6. `mix` 的换算公式是 `rel × 对应边尺寸 + px`；纯 `px` 项（`rel` 分量为 0）不依赖尺寸，无 VO 时照常参与命中判定。
+7. `mix` 里每个 `rel` 项自身必须在 `0..1`；表达式结果允许越界或为负（`1r-10p` 在窄窗口下为负是合法几何，命中判定自然裁剪），不报错。
 
 ## 命令写法陷阱
 
@@ -197,9 +206,11 @@ color_outline=#000000
 | 检查 | 提示 |
 |---|---|
 | 参数个数不对（既不是 6 个，也不是 `-- ` 分隔的 8 个） | 用法说明 |
-| 模式不是 `rel` / `px` | 未知坐标模式 |
-| 坐标不是数字 | 坐标必须是数字 |
-| 矩形面积为 0 | `x0 == x1` 或 `y0 == y1` |
+| 模式不是 `rel` / `px` / `mix` | 未知坐标模式 |
+| 坐标不是数字（仅 `rel` / `px` 模式） | 坐标必须是数字 |
+| 矩形面积为 0 | `x0 == x1` 或 `y0 == y1`；`mix` 在换算成像素后判断 |
+| `mix` 坐标写法不认识 | `mix 坐标 '…' 无效（支持 0.5、0.5r、100p、1r-10p）` |
+| `mix` 坐标里的 `rel` 项越界 | `mix 坐标 '…' 里的 rel 值必须在 0..1 之间` |
 | `rel` 坐标越界 | 必须在 0..1 之间，并回显四个坐标 |
 | `px` 坐标为负 | 不能为负 |
 | 区域内命令为空 | 不能为空 |
@@ -224,7 +235,7 @@ color_outline=#000000
 
 ## 实现要点
 
-1. 单次按键路径：`check_bindings`（首次）→ 参数校验 → `rect_to_px` → `record`（按矩形/成员归并，早于命中判定）→ `mouse_in_rect` → 打时间戳 → `run_command` → `notify_change` 触发调试视图重绘。
+1. 单次按键路径：`check_bindings`（首次）→ 参数校验（`mix` 在此解析成 `{rel, px}` 分量）→ `rect_to_px`（按 `{rel, px}` 分量换算）→ `record`（按矩形/成员归并，早于命中判定）→ `mouse_in_rect` → 打时间戳 → `run_command` → `notify_change` 触发调试视图重绘。
 2. 调试视图两遍渲染：第一遍遍历区域，画矩形并收集 `{ zi, z, hit, ax, ay }`；第二遍按 `"ax,ay"` 分组（保留首次出现顺序与组内记录顺序），逐组堆叠标签，标题行最后追加。
 3. 字号与间距：`fs = clamp(floor(h/36), 12, 48)`、`head_h = floor(fs * 1.8)`、`line_h = floor(fs * 1.45)`、`LABEL_GAP = 4`。
 4. 激活色到期：渲染时收集最早的 `active_*_at + active_duration`，`schedule_repaint` 挂一个 `mp.add_timeout` 到点重绘；重绘后再按新的最早到期时间续挂，已到期的自然不再计入。

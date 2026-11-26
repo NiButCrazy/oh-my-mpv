@@ -74,14 +74,50 @@ local function get_osd_size()
     return w, h
 end
 
--- 把给定矩形换算成 OSD 像素坐标，并归一化为左上/右下两点。
--- rel 模式缺有效尺寸时返回 nil，调用方按区域外处理。
-local function rect_to_px(mode, x0, y0, x1, y1, w, h)
-    if mode == "rel" then
-        if w <= 0 or h <= 0 then return nil end
-        x0, x1 = x0 * w, x1 * w
-        y0, y1 = y0 * h, y1 * h
+-- mix 坐标项：一个或两个带单位的数值。无单位按 rel。
+-- 返回 coord 或 nil, "syntax"|"rel"
+local NUM = "%d*%.?%d+"
+local function parse_mix_coord(token)
+    local s = tostring(token)
+    local n1, u1, op, n2, u2 = s:match("^(" .. NUM .. ")([rp]?)([%+%-])(" .. NUM .. ")([rp]?)$")
+    if not n1 then
+        n1, u1 = s:match("^(" .. NUM .. ")([rp]?)$")
     end
+    if not n1 then return nil, "syntax" end
+
+    local terms = { { n1, u1, "+" } }
+    if n2 then terms[#terms + 1] = { n2, u2, op } end
+
+    local rel, px = 0, 0
+    for _, t in ipairs(terms) do
+        local v = tonumber(t[1])
+        local unit = t[2] ~= "" and t[2] or "r"
+        local sign = t[3] == "-" and -1 or 1
+        if unit == "r" then
+            if v < 0 or v > 1 then return nil, "rel" end
+            rel = rel + sign * v
+        else
+            px = px + sign * v
+        end
+    end
+    return { rel = rel, px = px }
+end
+
+-- 单个坐标换算成像素；含 rel 分量且尺寸无效时返回 nil
+local function coord_px(c, dim)
+    if c.rel == 0 then return c.px end
+    if dim <= 0 then return nil end
+    return c.rel * dim + c.px
+end
+
+-- coords = { x0, y0, x1, y1 }，每项是 { rel, px }。
+-- 任一坐标无法换算（含 rel 且尺寸无效）时返回 nil；返回像素已按左上/右下归一化。
+local function rect_to_px(coords, w, h)
+    local x0 = coord_px(coords[1], w)
+    local y0 = coord_px(coords[2], h)
+    local x1 = coord_px(coords[3], w)
+    local y1 = coord_px(coords[4], h)
+    if not (x0 and y0 and x1 and y1) then return nil end
     if x0 > x1 then x0, x1 = x1, x0 end
     if y0 > y1 then y0, y1 = y1, y0 end
     return x0, y0, x1, y1
@@ -94,19 +130,30 @@ local function mouse_in_rect(x0, y0, x1, y1)
     return pos.x >= x0 and pos.x <= x1 and pos.y >= y0 and pos.y <= y1
 end
 
+-- 归一化比较键：先比 rel 分量，再比 px 分量（与窗口尺寸无关）
+local function coord_less(a, b)
+    if a.rel ~= b.rel then return a.rel < b.rel end
+    return a.px < b.px
+end
+
+local function coord_key(c)
+    return string.format("%s,%s", tostring(c.rel), tostring(c.px))
+end
+
 -- 记录一次调用：按矩形归并 zone，再按 (区内命令, 区外命令) 归并成员。
 -- 返回 zone、成员、以及是否新建了 zone 或成员。
-local function record(mode, a, x0, y0, x1, y1)
-    if x0 > x1 then x0, x1 = x1, x0 end
-    if y0 > y1 then y0, y1 = y1, y0 end
+local function record(coords, a)
+    local x0, x1 = coords[1], coords[3]
+    local y0, y1 = coords[2], coords[4]
+    if coord_less(x1, x0) then x0, x1 = x1, x0 end
+    if coord_less(y1, y0) then y0, y1 = y1, y0 end
 
-    local zkey = table.concat({ mode, x0, y0, x1, y1 }, "\1")
+    local zkey = table.concat({ coord_key(x0), coord_key(y0), coord_key(x1), coord_key(y1) }, "\1")
     local z = zone_by_key[zkey]
     local created = false
     if not z then
         z = {
-            mode = mode,
-            x0 = x0, y0 = y0, x1 = x1, y1 = y1,
+            coords = { x0, y0, x1, y1 },
             label = table.concat({ a[1], a[2], a[3], a[4], a[5] }, " "),
             members = {},
             member_by_key = {},
@@ -138,43 +185,73 @@ function M.handle(...)
     if binding_error then Notify.error(binding_error) end
 
     if #a ~= 6 and not (#a == 8 and a[7] == "--") then
-        Notify.error("region-exec: 用法 region-exec <rel|px> <x0> <y0> <x1> <y1> \"<区域内命令>\" [-- \"<区域外命令>\"]")
+        Notify.error("region-exec: 用法 region-exec <rel|px|mix> <x0> <y0> <x1> <y1> \"<区域内命令>\" [-- \"<区域外命令>\"]")
         return
     end
     local mode = a[1]
-    if mode ~= "rel" and mode ~= "px" then
-        Notify.error("region-exec: 未知坐标模式 '" .. tostring(mode) .. "'（只支持 rel / px）")
+    if mode ~= "rel" and mode ~= "px" and mode ~= "mix" then
+        Notify.error("region-exec: 未知坐标模式 '" .. tostring(mode) .. "'（只支持 rel / px / mix）")
         return
     end
-    local x0, y0, x1, y1 = tonumber(a[2]), tonumber(a[3]), tonumber(a[4]), tonumber(a[5])
-    if not (x0 and y0 and x1 and y1) then
-        Notify.error("region-exec: 坐标必须是数字")
-        return
-    end
-    if x0 == x1 or y0 == y1 then
-        Notify.error("region-exec: 矩形面积为 0（x0 == x1 或 y0 == y1）")
-        return
-    end
-    if mode == "rel" then
-        local lo, hi = math.min(x0, x1), math.max(x0, x1)
-        local lo_y, hi_y = math.min(y0, y1), math.max(y0, y1)
-        if lo < 0 or hi > 1 or lo_y < 0 or hi_y > 1 then
-            Notify.error(string.format(
-                "region-exec: rel 坐标必须在 0..1 之间（当前 %s %s %s %s）", a[2], a[3], a[4], a[5]))
+
+    local coords = {}
+    if mode == "mix" then
+        for i = 2, 5 do
+            local c, err = parse_mix_coord(a[i])
+            if not c then
+                if err == "rel" then
+                    Notify.error(string.format(
+                        "region-exec: mix 坐标 '%s' 里的 rel 值必须在 0..1 之间", tostring(a[i])))
+                else
+                    Notify.error(string.format(
+                        "region-exec: mix 坐标 '%s' 无效（支持 0.5、0.5r、100p、1r-10p）", tostring(a[i])))
+                end
+                return
+            end
+            coords[i - 1] = c
+        end
+    else
+        local x0, y0, x1, y1 = tonumber(a[2]), tonumber(a[3]), tonumber(a[4]), tonumber(a[5])
+        if not (x0 and y0 and x1 and y1) then
+            Notify.error("region-exec: 坐标必须是数字")
             return
         end
-    elseif x0 < 0 or y0 < 0 or x1 < 0 or y1 < 0 then
-        Notify.error("region-exec: px 坐标不能为负")
-        return
+        if x0 == x1 or y0 == y1 then
+            Notify.error("region-exec: 矩形面积为 0（x0 == x1 或 y0 == y1）")
+            return
+        end
+        if mode == "rel" then
+            local lo, hi = math.min(x0, x1), math.max(x0, x1)
+            local lo_y, hi_y = math.min(y0, y1), math.max(y0, y1)
+            if lo < 0 or hi > 1 or lo_y < 0 or hi_y > 1 then
+                Notify.error(string.format(
+                    "region-exec: rel 坐标必须在 0..1 之间（当前 %s %s %s %s）", a[2], a[3], a[4], a[5]))
+                return
+            end
+            coords = { { rel = x0, px = 0 }, { rel = y0, px = 0 },
+                       { rel = x1, px = 0 }, { rel = y1, px = 0 } }
+        else
+            if x0 < 0 or y0 < 0 or x1 < 0 or y1 < 0 then
+                Notify.error("region-exec: px 坐标不能为负")
+                return
+            end
+            coords = { { rel = 0, px = x0 }, { rel = 0, px = y0 },
+                       { rel = 0, px = x1 }, { rel = 0, px = y1 } }
+        end
     end
+
     if a[6] == nil or a[6] == "" then
         Notify.error("region-exec: 区域内命令不能为空")
         return
     end
 
     local w, h = get_osd_size()
-    local px0, py0, px1, py1 = rect_to_px(mode, x0, y0, x1, y1, w, h)
-    local _, m, created = record(mode, a, x0, y0, x1, y1)
+    local px0, py0, px1, py1 = rect_to_px(coords, w, h)
+    if mode == "mix" and px0 and (px0 == px1 or py0 == py1) then
+        Notify.error("region-exec: 矩形面积为 0（换算后 x0 == x1 或 y0 == y1）")
+        return
+    end
+    local _, m, created = record(coords, a)
 
     if px0 and mouse_in_rect(px0, py0, px1, py1) then
         m.active_inside_at = mp.get_time()
