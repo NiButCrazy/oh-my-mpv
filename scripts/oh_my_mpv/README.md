@@ -30,6 +30,7 @@ mpv/
 │           ├── playback.lua
 │           ├── region_debug.lua
 │           ├── region_exec.lua
+│           ├── region_picker.lua
 │           └── version.lua
 └── script-opts/
     └── oh_my_mpv.conf
@@ -66,6 +67,8 @@ F3 script-message-to oh_my_mpv region-exec-debug toggle
 | `play_pause` | 键绑定 | 播放/暂停，播放到结尾且暂停时从头重播 |
 | `open_files` | 键绑定 | PowerShell 文件对话框，多选，第一个 `replace` 其余 `append` |
 | `open_folder` | 键绑定 | PowerShell 文件夹对话框，整目录交给 mpv |
+| `region-pick` | `script-message` | 区域选择器：画面上点两个点生成坐标，见[区域选择器](#区域选择器) |
+| `region-pick-start` | 键绑定 | 同 `region-pick`；键绑定不能与消息同名，故加 `-start` 后缀 |
 
 ## 语法
 
@@ -107,6 +110,27 @@ KEY script-message-to oh_my_mpv region-exec <rel|px> <x0> <y0> <x1> <y1> "<区�
 - 标题行在右上角：`x, y px a.bb, c.dd rel  |  命中 N  |  M 个区域   ·   v0.1.0   OH MY MPV`；指针在窗口外时坐标段显示 `窗口外`；还没有任何区域时显示 `尚无区域记录 - 先触发一次绑定`。
 - 颜色语义：命中矩形边框/填充变绿；`区域内:` / `区域外:` 前缀用高亮色标出本次会走的那一支（另一支灰色）；命令执行过后命令文本变激活色，持续 `active_duration` 秒（`0` = 一直保持），到期自动重绘回灰。
 - 开启时观察 `mouse-pos` 与 `osd-dimensions`，每次变化重绘一次；关闭后解除观察者、清掉重绘定时器、清空覆盖层，无后台开销。
+
+## 区域选择器
+
+不想手算坐标时让脚本帮你取点：
+
+```conf
+F9 script-message-to oh_my_mpv region-pick
+# 或
+F9 script-binding oh_my_mpv/region-pick-start
+```
+
+- 触发后画面压暗：左键点第一个角，再点第二个角；右键 / `ESC` 取消，再次触发会从头重来。
+- 选点期间临时劫持 `MBTN_LEFT` / `MBTN_RIGHT` / `ESC`，出结果、取消或到期立即解除，平时不占用这几个键。
+- 选择过程中顶部提示下方实时显示指针坐标（`x, y px` 与 `rel` 比例），取点时可以直接对齐。
+- 第一个点之后有跟随鼠标的预览矩形与尺寸标注（像素 + `rel`）。
+- 两点确认后矩形保留 15 秒，左上角显示 `rel` / `px` 两行；完整绑定模板只写日志（终端或 `--log-file`），OSD 不显示，便携版双击启动时看不到日志属正常。
+- 结果框按 `rel` 比例绘制，窗口缩放时跟着缩放；`px` 行也按当前窗口重新换算，始终和框对得上（日志里记的是选择当时的像素值）。
+- 坐标取 `mouse-pos` 的当前像素，两点自动归一化成左上/右下；`rel` 保留 2 位小数（与调试视图的标题坐标一致），`px` 四舍五入取整。
+- 两点重合（面积为 0，`region-exec` 会拒绝）时提示并回到第一个点重取。
+- 需要有效的视频输出（`osd-dimensions` 非 0），否则直接报错。
+- 预览矩形用命中色（`color_border_hit` / `color_fill_hit`），最终结果用 `color_border_idle` / `color_fill_idle`；结果文字带半透明底板，避免和调试视图标签糊在一起。
 
 ## 配置
 
@@ -189,6 +213,7 @@ color_outline=#000000
 |---|---|
 | `main.lua` | 注册消息与键绑定，串联各模块 |
 | `modules/region_exec.lua` | 参数校验、`rect_to_px`、`mouse_in_rect`、区域/成员记录、执行命令 |
+| `modules/region_picker.lua` | 区域选择器：临时劫持左键取两点，生成 `rel` / `px` 坐标与绑定模板 |
 | `modules/region_debug.lua` | OSD 调试视图（矩形、标签堆叠、标题行、激活色到期重绘） |
 | `modules/notify.lua` | 错误提示的日志 + ASS 覆盖层 |
 | `modules/options.lua` | 读取 `script-opts/oh_my_mpv.conf` |
@@ -205,6 +230,7 @@ color_outline=#000000
 4. 激活色到期：渲染时收集最早的 `active_*_at + active_duration`，`schedule_repaint` 挂一个 `mp.add_timeout` 到点重绘；重绘后再按新的最早到期时间续挂，已到期的自然不再计入。
 5. 错误覆盖层与调试视图是两个独立 `ass-events` 覆盖层，互不干扰。
 6. `files.lua` 用 `utils.subprocess` + `powershell -NoProfile -STA`；对话框显示期间临时把 `ontop` 关掉再恢复；`cancellable = false`（对话框期间阻塞）。
+7. 区域选择器用 `mp.add_forced_key_binding` 临时占用 `MBTN_LEFT` / `MBTN_RIGHT` / `ESC`，选点期间观察 `mouse-pos` 与 `osd-dimensions` 重绘，结束用 `mp.remove_key_binding` + `unobserve_property` 解除；两点与结果都保存 `rel` 比例，渲染时按当前 `osd-dimensions` 重算 `px` 与矩形，窗口缩放不会让框、坐标和画面错位。
 
 ## 性能
 
@@ -222,3 +248,5 @@ color_outline=#000000
 - `ignore` 被直接跳过，不会下发到 mpv（省一次跨 Lua/C 的命令调用）
 
 调试视图开启后，开销转移到鼠标移动：每次 `mouse-pos` 变化重绘一次 OSD（实测 0.5–1.3 ms/次，随区域数线性增长）。这是唯一与帧率相关的成本，关闭调试视图即消失。
+
+区域选择器只在交互期间观察 `mouse-pos`，结束即解除；结果停留的 15 秒里只剩一个到期定时器，没有其他常驻开销。
