@@ -11,6 +11,7 @@ local VERSION = require "modules.version"
 local M = {}
 
 local MAX_MEMBERS = 5      -- 每个区域最多展开几条绑定
+local LABEL_GAP = 4        -- 同锚点标签块之间的垂直间距
 
 local zones = RegionExec.zones()
 local debug_on = false
@@ -138,9 +139,40 @@ local function render()
     local head_h = math.floor(fs * 1.8)
     local line_h = math.floor(fs * 1.45)
 
+    -- 头行 + 最多 MAX_MEMBERS 条成员行 + 一条省略行；返回 (ASS 行数组, 实际占用行数)
+    local function render_block(it, prefix, suffix, ly)
+        local z = it.z
+        local lx = it.ax + 8
+        local head = (prefix or "") .. string.format("%d. %s", it.zi, z.label)
+        if #z.members > 1 then
+            head = head .. string.format("  ➔  %d 个绑定", #z.members)
+        end
+        if suffix then head = head .. suffix end
+
+        local rows = { text_event(lx, ly, fs, { { C.text, head } }) }
+
+        -- 成员行：屏幕放得下多少就展开多少
+        local room = math.max(0, math.floor((h - ly - fs) / line_h) - 1)
+        local shown = math.min(#z.members, MAX_MEMBERS, room)
+        for mi = 1, shown do
+            local m = z.members[mi]
+            rows[#rows + 1] = text_event(lx, ly + mi * line_h, fs,
+                member_segments(m, it.hit,
+                    active_now(m.active_inside_at), active_now(m.active_outside_at)))
+        end
+        if #z.members > shown then
+            rows[#rows + 1] = text_event(lx, ly + (shown + 1) * line_h, fs,
+                { { C.text_dim, string.format("    … 另 %d 个绑定", #z.members - shown) } })
+        end
+
+        return rows, 1 + shown + (#z.members > shown and 1 or 0)
+    end
+
     local out = {}
     local hits = 0
+    local items = {}
 
+    -- 第一遍：只画矩形，同时把标签项按锚点分组留到第二遍
     for zi, z in ipairs(zones) do
         local x0, y0, x1, y1 = RegionExec.rect_to_px(z.mode, z.x0, z.y0, z.x1, z.y1, w, h)
         if x0 then
@@ -156,37 +188,79 @@ local function render()
                 iround(x0), iround(y0), iround(x1), iround(y0),
                 iround(x1), iround(y1), iround(x0), iround(y1))
 
-            -- 标签锚定区域左上角；顶到屏幕边时让开标题行
-            local lx = iround(x0) + 8
-            local ly = math.max(head_h + 4, math.min(iround(y0) + 6, h - fs - 6))
+            items[#items + 1] = { zi = zi, z = z, hit = hit, ax = iround(x0), ay = iround(y0) }
+        end
+    end
 
-            -- 默认从区域顶部往下排；下方放不下整个块时改为向上展开
-            local block_h = (1 + math.min(#z.members, MAX_MEMBERS)) * line_h
+    -- 第二遍：按左上角像素坐标分组，同组标签纵向堆叠，避免互相盖住
+    local groups, group_order = {}, {}
+    for _, it in ipairs(items) do
+        local key = it.ax .. "," .. it.ay
+        local g = groups[key]
+        if not g then
+            g = { ax = it.ax, ay = it.ay, items = {} }
+            groups[key] = g
+            group_order[#group_order + 1] = g
+        end
+        g.items[#g.items + 1] = it
+    end
+
+    for _, g in ipairs(group_order) do
+        if #g.items == 1 then
+            -- 单块组保持原布局：从区域顶部往下排，下方放不下时改为向上展开
+            local it = g.items[1]
+            local ly = math.max(head_h + 4, math.min(it.ay + 6, h - fs - 6))
+            local block_h = (1 + math.min(#it.z.members, MAX_MEMBERS)) * line_h
             if ly + block_h > h - 4 then
-                local alt = math.min(iround(y0), h) - block_h - 4
+                local alt = math.min(it.ay, h) - block_h - 4
                 if alt >= head_h + 4 then ly = alt end
             end
-
-            -- 头行：序号 + 原始坐标写法（多条绑定时标出数量）
-            local head = string.format("%d. %s", zi, z.label)
-            if #z.members > 1 then
-                head = head .. string.format("  ➔  %d 个绑定", #z.members)
+            local rows = render_block(it, nil, nil, ly)
+            for _, r in ipairs(rows) do out[#out + 1] = r end
+        else
+            -- 多块组：从公共锚点向下堆叠，放不下时从末尾折叠成一行提示
+            local plan = {}
+            for i, it in ipairs(g.items) do
+                plan[i] = { it = it, lines = 1 + math.min(#it.z.members, MAX_MEMBERS) }
             end
-            out[#out + 1] = text_event(lx, ly, fs, { { C.text, head } })
 
-            -- 成员行：屏幕放得下多少就展开多少
-            local room = math.max(0, math.floor((h - ly - fs) / line_h) - 1)
-            local shown = math.min(#z.members, MAX_MEMBERS, room)
-
-            for mi = 1, shown do
-                local m = z.members[mi]
-                out[#out + 1] = text_event(lx, ly + mi * line_h, fs,
-                    member_segments(m, hit,
-                        active_now(m.active_inside_at), active_now(m.active_outside_at)))
+            local base = math.max(head_h + 4, math.min(g.ay + 6, h - fs - 6))
+            local folded = 0
+            local top, used
+            while true do
+                used = 0
+                for i, p in ipairs(plan) do
+                    used = used + p.lines * line_h
+                    if i > 1 then used = used + LABEL_GAP end
+                end
+                -- 先按理想高度整组上移；仍放不下则去掉末尾一块再试
+                if folded > 0 then used = used + LABEL_GAP + line_h end
+                top = math.max(head_h + 4, math.min(base, h - 4 - used))
+                if top + used <= h - 4 or #plan <= 1 then break end
+                table.remove(plan)
+                folded = folded + 1
             end
-            if #z.members > shown then
-                out[#out + 1] = text_event(lx, ly + (shown + 1) * line_h, fs,
-                    { { C.text_dim, string.format("    … 另 %d 个绑定", #z.members - shown) } })
+
+            -- 折叠提示：整行放得下就单独一行，否则并进最后一块的头行
+            local suffix, note = nil, nil
+            if folded > 0 then
+                if top + used <= h - 4 then
+                    note = string.format("    … 另 %d 个同锚点区域", folded)
+                else
+                    suffix = string.format("  |  同锚点另 %d 个区域", folded)
+                end
+            end
+
+            local y = top
+            for i, p in ipairs(plan) do
+                -- 组内第 2 块起加前缀，表示共用左上角
+                local rows, n = render_block(p.it, i > 1 and "└ " or nil,
+                    i == #plan and suffix or nil, y)
+                for _, r in ipairs(rows) do out[#out + 1] = r end
+                y = y + n * line_h + LABEL_GAP
+            end
+            if note then
+                out[#out + 1] = text_event(g.ax + 8, y, fs, { { C.text_dim, note } })
             end
         end
     end
