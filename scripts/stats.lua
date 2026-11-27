@@ -9,7 +9,7 @@
 -- 本文件是改造版：不再要求"原版段逐字节不变"，汉化与功能都直接写在源码里。
 --
 -- 汉化怎么改：
---   * 静态文案：直接改对应函数里的中文字符串（如 add_file 的「文件：」「路径：」）
+--   * 静态文案：直接改对应函数里的中文字符串（如 add_file 的「文件：」「目录：」）
 --   * 动态词：值来自 mpv 属性、源码里只有变量的，集中在文件前部的 ZH 表
 --     （命令子词 / 轨道标志 / 轨道类型 / 渲染阶段 / 性能计数名）
 -- 功能怎么加：
@@ -729,14 +729,13 @@ local function append_filters(s, prop, prefix)
 end
 
 
--- ==================== 文件路径显示 ====================
+-- ==================== 文件目录显示 ====================
 -- 本节可直接修改：文案、前缀、截断预算都在这里。
--- 在 "文件：" 行后补一行完整路径，仍遵守"不动原版段"的约定：
---   * 路径取 path 属性；相对路径用 working-directory 拼成绝对路径，URL 原样显示
---   * path 与 filename 相同（只写了裸文件名）时不重复显示
+-- 在 "文件：" 行后补一行所在目录（不含文件名，文件名上面已经有了）：
+--   * 取 path 属性；相对路径用 working-directory 拼成绝对路径，URL 原样处理
+--   * 只写裸文件名（没有目录）时不显示
 --   * 超出屏幕宽度时中间省略：按字号估算每字宽度（ASCII 0.5 em、其余 1 em），
---     保留盘符/目录头与文件名，避免 libass 自动换行把后面的行挤乱
-local PATH_PREFIX = "路径："
+--     避免 libass 自动换行把后面的行挤乱
 
 -- 字符起点（UTF-8 续字节 0x80..0xBF 不是字符起点）
 local function char_starts(s)
@@ -785,11 +784,11 @@ local function path_budget_em()
     local w = mp.get_property_number("osd-width") or 0
     local fs = math.max(font_size > 0 and font_size or 0, o.font_size or 0)
     if w <= 0 or fs <= 0 then return 60 end
-    -- 预留 "路径：" 前缀与右侧边距（约 4 em）
+    -- 预留 "目录：" 前缀与右侧边距（约 4 em）
     return math.max(20, math.floor(w / fs * 0.95) - 4)
 end
 
-local function file_path_text()
+local function file_dir_text()
     local path = mp.get_property("path")
     if not path or path == "" then return nil end
     if path == mp.get_property("filename") then return nil end
@@ -804,7 +803,12 @@ local function file_path_text()
         end
     end
 
-    return middle_shorten(path, path_budget_em())
+    -- 去掉末尾的文件名，只留目录；没有目录（裸文件名 / 根目录下的文件）则不显示
+    local dir = path:match("^(.*)[/\\][^/\\]*$")
+    if not dir or dir == "" then return nil end
+    if dir:match("^%a:$") then dir = dir .. "\\" end  -- 盘符根目录补上分隔符
+
+    return middle_shorten(dir, path_budget_em())
 end
 
 
@@ -816,9 +820,9 @@ end
 local function add_file(s, print_cache, print_tags)
     append(s, "", {prefix="文件：", nl="", indent=""})
     append_property(s, "filename", {prefix_sep="", nl="", indent=""})
-    local file_path = file_path_text()
-    if file_path then
-        append(s, file_path, {prefix="路径："})
+    local file_dir = file_dir_text()
+    if file_dir then
+        append(s, file_dir, {prefix="目录："})
     end
     if mp.get_property_osd("filename") ~= mp.get_property_osd("media-title") then
         append_property(s, "media-title", {prefix="标题："})
