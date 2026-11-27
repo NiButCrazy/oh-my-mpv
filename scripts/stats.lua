@@ -1920,6 +1920,14 @@ for k, page in pairs(pages) do
     -- 切换指定页面的绑定，例如：
     -- "h script-binding stats/display-page-4-toggle".
     mp.add_key_binding(nil, "display-page-" .. page.idx .. "-toggle", function()
+        -- 已在切换模式且按的是别的页 → 直接切页；否则按开关处理（当前页则关闭）
+        if display_timer:is_enabled() and not display_timer.oneshot and curr_page ~= k then
+            curr_page = k
+            reset_scroll_offsets()
+            update_scroll_bindings(k)
+            print_page(k)
+            return
+        end
         curr_page = k
         process_key_binding(false)
     end, {repeatable=false})
