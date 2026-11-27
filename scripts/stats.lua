@@ -1,51 +1,44 @@
 -- ============================================================================
--- mpv stats.lua 中文汉化（模块化 / 非侵入式）
--- 作者：yosh.wang    更新：20260927
+-- stats.lua  ——  可直接修改的 mpv 统计面板
 --
--- 🔗 项目仓库：https://github.com/yosh-wang/mpv-stats.lua-zh-chinese-translation-
--- 🔗 MPV中文社区：https://github.com/yosh-wang/MPV-QQ-Discussion-Group
--- 🔗 mpv资源导航：https://github.com/yosh-wang/MPV-Resource-Index
+-- 来源与署名：
+--   * 统计核心：mpv 官方 stats.lua（https://github.com/Argon-/mpv-stats）
+--   * 中文文案与 CPU/GPU 监控：yosh.wang 的汉化项目
+--     （https://github.com/yosh-wang/mpv-stats.lua-zh-chinese-translation-）
 --
--- 📌 QQ ①群：1097053691【2000人群已满】
--- 📌 QQ ②群：1104144778
--- 🔗 ①群入群链接：https://qm.qq.com/q/CnzyTeDAoo
--- 🔗 ②群入群链接：https://qm.qq.com/q/KDxk01ukwe
--- 🔗 进群暗号：mpv 玩家
+-- 本文件是改造版：不再要求"原版段逐字节不变"，汉化与功能都直接写在源码里。
 --
+-- 汉化怎么改：
+--   * 静态文案：直接改对应函数里的中文字符串（如 add_file 的「文件：」「路径：」）
+--   * 动态词：值来自 mpv 属性、源码里只有变量的，集中在文件前部的 ZH 表
+--     （命令子词 / 轨道标志 / 轨道类型 / 渲染阶段 / 性能计数名）
+-- 功能怎么加：
+--   * 直接改对应 add_* 函数最省事，文件路径显示就在 add_file 上方
+-- 使用注意：
+--   * 与 stats.lua 功能相同，不能同时启用（会抢 1-5、i 等按键）
 -- ============================================================================
--- ============================================================
--- mpv stats.lua 中文汉化（模块化 / 非侵入式）
--- 原版核心逻辑（下方“原版 stats.lua 内容”段）逐字节保持不变；
--- 所有中文化与 CPU/GPU 监控均在文件末尾模块中实现（铁律）。
--- 修改汉化只动末尾模块，绝不改动原版代码任何一行。
--- ============================================================
--- 模块位置：
---   原版 stats.lua 内容（逐字节不变）        ：第 27 行 起
---   ① 自动翻译模块 + ② 系统资源监控模块      ：第 1852 行 起（到文件末尾）
---   最终渲染出口翻译（显示出口包装）          ：模块最末尾
--- ============================================================
--- Display some stats.
+-- 显示播放统计。
 --
--- Please consult the readme for information about usage and configuration:
+-- 用法与配置请参考 readme：
 -- https://github.com/Argon-/mpv-stats
 --
--- Please note: not every property is always available and therefore not always
--- visible.
+-- 注意：不是所有属性都始终可用，因此不一定
+-- 总会显示。
 
 local mp = require 'mp'
 local utils = require 'mp.utils'
 local input = require 'mp.input'
 
--- Options
+-- 选项
 local o = {
-    -- Default key bindings
+    -- 默认按键绑定
     key_page_1 = "1",
     key_page_2 = "2",
     key_page_3 = "3",
     key_page_4 = "4",
     key_page_5 = "5",
     key_page_0 = "0",
-    -- For pages which support scrolling
+    -- 支持滚动的页面
     key_scroll_up = "UP",
     key_scroll_down = "DOWN",
     key_search = "/",
@@ -53,18 +46,18 @@ local o = {
     scroll_lines = 1,
 
     duration = 4,
-    redraw_delay = 1,                -- acts as duration in the toggling case
+    redraw_delay = 1,                -- 切换模式下作为持续时长
     ass_formatting = true,
-    persistent_overlay = false,      -- whether the stats can be overwritten by other output
-    filter_params_max_length = 100,  -- show one filter per line if list exceeds this length
-    file_tag_max_length = 128,       -- only show file tags shorter than this length in bytes
-    file_tag_max_count = 16,         -- only show the first x file tags
-    show_frame_info = false,         -- whether to show the current frame info
+    persistent_overlay = false,      -- 统计是否允许被其他 OSD 覆盖
+    filter_params_max_length = 100,  -- 滤镜列表超过该长度时每行一个
+    file_tag_max_length = 128,       -- 只显示短于该字节数的文件标签
+    file_tag_max_count = 16,         -- 只显示前 x 个文件标签
+    show_frame_info = false,         -- 是否显示当前帧信息
     term_clip = true,
-    track_info_selected_only = true, -- only show selected track info
+    track_info_selected_only = true, -- 只显示已选中的轨道信息
     debug = false,
 
-    -- Graph options and style
+    -- 图表选项与样式
     plot_perfdata = false,
     plot_vsync_ratio = false,
     plot_vsync_jitter = false,
@@ -72,15 +65,15 @@ local o = {
     plot_tonemapping_lut = false,
     skip_frames = 5,
     global_max = true,
-    flush_graph_data = true,         -- clear data buffers when toggling
+    flush_graph_data = true,         -- 切换模式下清空数据缓冲
     plot_bg_border_color = "0000FF",
     plot_bg_color = "262626",
     plot_color = "FFFFFF",
     plot_bg_border_width = 1.25,
 
-    -- Text style
+    -- 文字样式
     font = "",
-    font_mono = "monospace",   -- monospaced digits are sufficient
+    font_mono = "monospace",   -- 等宽数字足够
     font_size = 20,
     font_color = "",
     border_size = 1.65,
@@ -91,13 +84,13 @@ local o = {
     alpha = "11",
     vidscale = "auto",
 
-    -- Custom header for ASS tags to style the text output.
-    -- Specifying this will ignore the text style values above and just
-    -- use this string instead.
+    -- 自定义 ASS 头部标签，用于设置输出文字样式。
+    -- 指定后会忽略上面的文字样式参数，直接
+    -- 使用这个字符串。
     custom_header = "",
 
-    -- Text formatting
-    -- With ASS
+    -- 文本格式
+    -- 使用 ASS 时
     ass_nl = "\\N",
     ass_indent = "\\h\\h\\h\\h\\h",
     ass_prefix_sep = "\\h\\h",
@@ -105,7 +98,7 @@ local o = {
     ass_b0 = "{\\b0}",
     ass_it1 = "{\\i1}",
     ass_it0 = "{\\i0}",
-    -- Without ASS
+    -- 不使用 ASS 时
     no_ass_nl = "\n",
     no_ass_indent = "    ",
     no_ass_prefix_sep = " ",
@@ -114,7 +107,7 @@ local o = {
     no_ass_it1 = "\027[3m",
     no_ass_it0 = "\027[0m",
 
-    bindlist = "no",  -- print page 4 to the terminal on startup and quit mpv
+    bindlist = "no",  -- 启动时把第 4 页输出到终端并退出 mpv
 }
 
 local update_scale
@@ -126,30 +119,30 @@ local format = string.format
 local max = math.max
 local min = math.min
 
--- Scaled metrics
+-- 缩放后的度量值
 local font_size = o.font_size
 local border_size = o.border_size
 local shadow_x_offset = o.shadow_x_offset
 local shadow_y_offset = o.shadow_y_offset
 local plot_bg_border_width = o.plot_bg_border_width
--- Function used to record performance data
+-- 记录性能数据的函数
 local recorder = nil
--- Timer used for redrawing (toggling) and clearing the screen (oneshot)
+-- 用于重绘（切换模式）与清屏（单次模式）的定时器
 local display_timer = nil
--- Timer used to update cache stats.
+-- 用于刷新缓存统计的定时器。
 local cache_recorder_timer
--- Current page and <page key>:<page function> mappings
+-- 当前页面与 <页面按键>:<页面函数> 的映射
 local curr_page = o.key_page_1
 local pages = {}
 local scroll_bound = false
 local searched_text
 local tm_viz_prev = nil
--- Save these sequences locally as we'll need them a lot
+-- 这些转义序列用得很多，先存到局部变量
 local ass_start = mp.get_property_osd("osd-ass-cc/0")
 local ass_stop = mp.get_property_osd("osd-ass-cc/1")
--- Ring buffers for the values used to construct a graph.
--- .pos denotes the current position, .len the buffer length
--- .max is the max value in the corresponding buffer
+-- 绘图用的环形缓冲区。
+-- .pos 是当前位置，.len 是缓冲区长度
+-- .max 是对应缓冲区的最大值
 local vsratio_buf, vsjitter_buf
 local function init_buffers()
     vsratio_buf = {0, pos = 1, len = 50, max = 0}
@@ -174,11 +167,53 @@ local function graph_add_value(graph, value)
     graph.max = max(graph.max, value)
 end
 
+-- ==================== 动态值映射（可自由修改） ====================
+-- 静态文案已直接写进下面各处的源码；这里只放"值来自 mpv 属性、源码里只有变量"的词。
+local ZH = {
+    -- 命令子词（按键绑定页的分组标题）
+    cmd = {
+        seek = "跳转", playlist = "播放列表", cycle = "循环", set = "设置",
+        add = "添加", toggle = "切换", change_list = "变更列表",
+        script_binding = "脚本绑定", script_message_to = "脚本消息至",
+    },
+    -- 轨道标志（track-list 的 default/forced/...）
+    flag = {
+        default = "默认", forced = "强制", dependent = "依赖",
+        ["visual-impaired"] = "视觉障碍", ["hearing-impaired"] = "听觉障碍",
+        original = "原始", commentary = "解说", image = "图像",
+        albumart = "专辑封面", external = "外部",
+    },
+    -- 轨道类型
+    track = { video = "视频", audio = "音频", sub = "字幕", image = "图像" },
+    -- 渲染阶段：vo-passes 分组名 + pass 描述
+    stage = {
+        vo = "输出", decoder = "解码", gpu = "显卡", renderer = "渲染",
+        fresh = "新帧", redraw = "重绘",
+        scale = "缩放", shader = "着色", blit = "位块", PP = "后期",
+    },
+    -- 内部性能计数名称（perf-info）
+    perf = {
+        ["poll-time"] = "轮询耗时",
+        ["demuxer/thread"] = "解封装/线程",
+        ["main/iterations"] = "主循环/单次",
+        ["main/thread"] = "主循环/线程",
+        ["osd/osd-render/cpu"] = "OSD渲染/CPU",
+        ["osd/osd-render/time"] = "OSD渲染/总时",
+        ["osd/sub-render/cpu"] = "字幕渲染/CPU",
+        ["osd/sub-render/time"] = "字幕渲染/总时",
+        ["vo/iterations"] = "视频输出/单次",
+        ["vo/video-draw/cpu"] = "视频输出/绘制/CPU",
+        ["vo/video-draw/time"] = "视频输出/绘制/总时",
+        ["vo/video-flip/cpu"] = "视频输出/提交/CPU",
+        ["vo/video-flip/time"] = "视频输出/提交/总时"
+    },
+}
+
 local function no_ASS(t)
     if not o.use_ass then
         return t
     elseif not o.persistent_overlay then
-        -- mp.osd_message supports ass-escape using osd-ass-cc/{0|1}
+        -- mp.osd_message 用 osd-ass-cc/{0|1} 支持 ASS 转义
         return ass_stop .. t .. ass_start
     else
         return mp.command_native({"escape-ass", tostring(t)})
@@ -239,21 +274,21 @@ local function has_vo_window()
 end
 
 
--- Generate a graph from the given values.
--- Returns an ASS formatted vector drawing as string.
+-- 根据给定数值生成图表。
+-- 返回 ASS 格式的矢量图形字符串。
 --
--- values: Array/table of numbers representing the data. Used like a ring buffer
---         it will get iterated backwards `len` times starting at position `i`.
--- i     : Index of the latest data value in `values`.
--- len   : The length/amount of numbers in `values`.
--- v_max : The maximum number in `values`. It is used to scale all data
---         values to a range of 0 to `v_max`.
--- v_avg : The average number in `values`. It is used to try and center graphs
---         if possible. May be left as nil
--- scale : A value that will be multiplied with all data values.
--- x_tics: Horizontal width multiplier for the steps
+-- values：数值数组/表，按环形缓冲区使用
+-- 从位置 `i` 开始向前遍历 `len` 次。
+-- i     ：`values` 中最新数据的下标。
+-- len   ：`values` 中的数值个数。
+-- v_max ：`values` 中的最大值，用于把所有数据缩放到
+-- 0 到 `v_max` 的区间。
+-- v_avg ：`values` 的平均值，用于尽量让图表居中，
+-- 可为 nil。
+-- scale ：与所有数据相乘的系数。
+-- x_tics：步长的水平宽度系数
 local function generate_graph(values, i, len, v_max, v_avg, scale, x_tics)
-    -- Check if at least one value exists
+    -- 至少有一个值时才有意义
     if not values[i] then
         return ""
     end
@@ -264,12 +299,12 @@ local function generate_graph(values, i, len, v_max, v_avg, scale, x_tics)
     local x = 0
 
     if v_max > 0 then
-        -- try and center the graph if possible, but avoid going above `scale`
+        -- 尽量让图表居中，但不要超过 `scale`
         if v_avg and v_avg > 0 then
             scale = min(scale, v_max / (2 * v_avg))
         end
         scale = scale * y_max / v_max
-    end  -- else if v_max==0 then all values are 0 and scale doesn't matter
+    end  -- 否则若 v_max==0 则所有值为 0，缩放系数无所谓
 
     local s = {format("m 0 0 n %f %f l ", x, y_max - scale * values[i])}
     i = ((i - 2) % len) + 1
@@ -313,19 +348,19 @@ local function append(s, str, attr)
 end
 
 
--- Format and append a property.
--- A property whose value is either `nil` or empty (hereafter called "invalid")
--- is skipped and not appended.
--- Returns `false` in case nothing was appended, otherwise `true`.
+-- 格式化并追加一个属性。
+-- 值为 `nil` 或空的属性（下称"无效"）
+-- 会被跳过，不追加。
+-- 未追加任何内容时返回 `false`，否则返回 `true`。
 --
--- s      : Table containing strings.
--- prop   : The property to query and format (based on its OSD representation).
--- attr   : Optional table to overwrite certain (formatting) attributes for
---          this property.
--- exclude: Optional table containing keys which are considered invalid values
---          for this property. Specifying this will replace empty string as
---          default invalid value (nil is always invalid).
--- cached : If true, use get_property_cached instead of get_property_osd
+-- s      ：存放字符串的表。
+-- prop   ：要查询并格式化的属性（按其 OSD 表示）。
+-- attr   ：可选表，用于覆盖该属性的部分（格式）
+-- 参数。
+-- exclude：可选表，其中的键视为该属性的无效值；
+-- 指定后会用这些键替代空字符串
+-- 作为默认无效值（nil 始终无效）。
+-- cached ：为 true 时用 get_property_cached 而不是 get_property_osd
 local function append_property(s, prop, attr, excluded, cached)
     excluded = excluded or {[""] = true}
     local ret
@@ -353,11 +388,11 @@ local function sorted_keys(t, comp_fn)
 end
 
 local function scroll_hint(search)
-    local hint = format("(hint: scroll with %s/%s", o.key_scroll_up, o.key_scroll_down)
+    local hint = format("（提示：用 %s/%s 滚动", o.key_scroll_up, o.key_scroll_down)
     if search then
-        hint = hint .. " and search with " .. o.key_search
+        hint = hint .. "，按 " .. o.key_search .. " 搜索"
     end
-    hint = hint .. ")"
+    hint = hint .. "）"
     if not o.use_ass then return " " .. hint end
     return format(" {\\fs%s}%s{\\fs%s}", font_size * 0.66, hint, font_size)
 end
@@ -368,7 +403,7 @@ local function append_perfdata(header, s, dedicated_page)
         return
     end
 
-    -- Sums of all last/avg/peak values
+    -- 所有 last/avg/peak 数值的合计
     local last_s, avg_s, peak_s = {}, {}, {}
     for frame, data in pairs(vo_p) do
         last_s[frame], avg_s[frame], peak_s[frame] = 0, 0, 0
@@ -379,19 +414,19 @@ local function append_perfdata(header, s, dedicated_page)
         end
     end
 
-    -- Pretty print measured time
+    -- 格式化测量时间
     local function pp(i)
-        -- rescale to microseconds for a saner display
+        -- 换算成微秒，显示更直观
         return format("%5d", i / 1000)
     end
 
-    -- Format n/m with a font weight based on the ratio
+    -- 按比例设置字体粗细后格式化 n/m
     local function p(n, m)
         local i = 0
         if m > 0 then
             i = tonumber(n) / m
         end
-        -- Calculate font weight. 100 is minimum, 400 is normal, 700 bold, 900 is max
+        -- 计算字重：100 最细，400 常规，700 粗体，900 最粗
         local w = (700 * math.sqrt(i)) + 200
         if not o.use_ass then
             local str = format("%3d%%", i * 100)
@@ -406,32 +441,32 @@ local function append_perfdata(header, s, dedicated_page)
     local font_mono = o.use_ass and format("{\\fn%s}", o.font_mono) or ""
     local indent = o.use_ass and "\\h" or " "
 
-    -- ensure that the fixed title is one element and every scrollable line is
-    -- also one single element.
+    -- 固定标题作为一个元素，每条可滚动行也作为
+    -- 单独的一个元素。
     local h = dedicated_page and header or s
     h[#h+1] = format("%s%s%s%s%s%s%s%s",
                      dedicated_page and "" or o.nl, dedicated_page and "" or o.indent,
-                     bold("Frame Timings:"), o.prefix_sep, font_small,
-                     "(last/average/peak μs)", font_normal,
+                     bold("帧耗时："), o.prefix_sep, font_small,
+                     "（最新/平均/峰值 微秒）", font_normal,
                      dedicated_page and scroll_hint() or "")
 
-    for _,frame in ipairs(sorted_keys(vo_p)) do  -- ensure fixed display order
+    for _,frame in ipairs(sorted_keys(vo_p)) do  -- 保证固定的显示顺序
         local data = vo_p[frame]
         local f = "%s%s%s%s%s / %s / %s %s%s%s%s%s%s"
 
         if dedicated_page then
             s[#s+1] = format("%s%s%s:", o.nl, o.indent,
-                             bold(frame:gsub("^%l", string.upper)))
+                             bold(ZH.stage[frame] or frame:gsub("^%l", string.upper)))
 
             for _, pass in ipairs(data) do
                 s[#s+1] = format(f, o.nl, o.indent, o.indent,
                                  font_mono, pp(pass["last"]),
                                  pp(pass["avg"]), pp(pass["peak"]),
                                  o.prefix_sep .. indent, p(pass["last"], last_s[frame]),
-                                 font, o.prefix_sep, o.prefix_sep, pass["desc"])
+                                 font, o.prefix_sep, o.prefix_sep, ZH.stage[pass["desc"]] or pass["desc"])
 
                 if o.plot_perfdata and o.use_ass then
-                    -- use the same line that was already started for this iteration
+                    -- 复用本轮已经开始的同一行
                     s[#s] = s[#s] ..
                               generate_graph(pass["samples"], pass["count"],
                                              pass["count"], pass["peak"],
@@ -439,77 +474,77 @@ local function append_perfdata(header, s, dedicated_page)
                 end
             end
 
-            -- Print sum of timing values as "Total"
+            -- 以"总计"输出各阶段耗时之和
             s[#s+1] = format(f, o.nl, o.indent, o.indent,
                              font_mono, pp(last_s[frame]),
                              pp(avg_s[frame]), pp(peak_s[frame]),
-                             o.prefix_sep, bold("Total"), font, "", "", "")
+                             o.prefix_sep, bold("总计"), font, "", "", "")
         else
-            -- for the simplified view, we just print the sum of each pass
+            -- 简化视图只输出每个阶段的合计
             s[#s+1] = format(f, o.nl, o.indent, o.indent, font_mono,
                             pp(last_s[frame]), pp(avg_s[frame]), pp(peak_s[frame]),
                             "", "", font, o.prefix_sep, o.prefix_sep,
-                            frame:gsub("^%l", string.upper))
+                            ZH.stage[frame] or frame:gsub("^%l", string.upper))
         end
     end
 end
 
--- command prefix tokens to strip - includes generic property commands
+-- 需要去掉的命令前缀（含通用属性命令）
 local cmd_prefixes = {
     osd_auto=1, no_osd=1, osd_bar=1, osd_msg=1, osd_msg_bar=1, raw=1, sync=1,
     async=1, expand_properties=1, repeatable=1, nonrepeatable=1, nonscalable=1,
     set=1, add=1, multiply=1, toggle=1, cycle=1, cycle_values=1, ["!reverse"]=1,
     change_list=1,
 }
--- commands/writable-properties prefix sub-words (followed by -) to strip
+-- 需要去掉的命令/可写属性前缀子词（后跟 -）
 local name_prefixes = {
     define=1, delete=1, enable=1, disable=1, dump=1, write=1, drop=1, revert=1,
     ab=1, hr=1, secondary=1, current=1,
 }
--- extract a command "subject" from a command string, by removing all
--- generic prefix tokens and then returning the first interesting sub-word
--- of the next token. For target-script name we also check another token.
--- The tokenizer works fine for things we care about - valid mpv commands,
--- properties and script names, possibly quoted, white-space[s]-separated.
--- It's decent in practice, and worst case is "incorrect" subject.
+-- 从命令字符串中提取"主题"：先去掉所有
+-- 通用前缀，再返回下一个 token 中第一个
+-- 有意义的子词；脚本名还要再看一个 token。
+-- 这个分词器对关心的场景足够：合法的 mpv 命令、
+-- 属性、脚本名，可能带引号，以空白分隔。
+-- 实践中够用，最坏情况只是主题"不准"。
 local function cmd_subject(cmd)
-    cmd = cmd:gsub(";.*", ""):gsub("%-", "_")  -- only first cmd, s/-/_/
-    local TOKEN = '^%s*["\']?([%w_!]*)'  -- captures+ends before (maybe) final "
+    cmd = cmd:gsub(";.*", ""):gsub("%-", "_")  -- 只取第一条命令，并把 - 换成 _
+    local TOKEN = '^%s*["\']?([%w_!]*)'  -- 捕获并在可能存在的结尾引号前结束
     local tok, sname, subw
 
     repeat tok, cmd = cmd:match(TOKEN .. '["\']?(.*)')
     until not cmd_prefixes[tok]
-    -- tok is the 1st non-generic command/property name token, cmd is the rest
+    -- tok 是第一个非通用命令/属性名 token，cmd 是剩余部分
 
     sname = tok == "script_message_to" and cmd:match(TOKEN)
          or tok == "script_binding" and cmd:match(TOKEN .. "/")
     if sname and sname ~= "" then
-        return "script: " .. sname
+        return "脚本：" .. sname
     end
 
-    -- return the first sub-word of tok which is not a useless prefix
+    -- 返回 tok 中第一个不是无用前缀的子词
     repeat subw, tok = tok:match("([^_]*)_?(.*)")
     until tok == "" or not name_prefixes[subw]
-    return subw:len() > 1 and subw or "[unknown]"
+    return subw:len() > 1 and (ZH.cmd[subw] or subw) or "[未知]"
 end
 
--- key names are valid UTF-8, ascii7 except maybe the last/only codepoint.
--- we count codepoints and ignore wcwidth. no need for grapheme clusters.
--- our error for alignment is at most one cell (if last CP is double-width).
--- (if k was valid but arbitrary: we'd count all bytes <0x80 or >=0xc0)
+-- 键名是合法 UTF-8，除最后一个/唯一码点外都是 ASCII7。
+-- 只数码点、忽略 wcwidth，不需要字形簇。
+-- 对齐误差最多一个字符宽（最后一个码点为全角时）。
+-- （若 k 任意但合法：统计所有 <0x80 或 >=0xc0 的字节）
 local function keyname_cells(k)
     local klen = k:len()
-    if klen > 1 and k:byte(klen) >= 0x80 then  -- last/only CP is not ascii7
+    if klen > 1 and k:byte(klen) >= 0x80 then  -- 最后一个/唯一码点不是 ASCII7
         repeat klen = klen-1
-        until klen == 1 or k:byte(klen) >= 0xc0  -- last CP begins at klen
+        until klen == 1 or k:byte(klen) >= 0xc0  -- 最后一个码点从 klen 开始
     end
     return klen
 end
 
 local function get_kbinfo_lines()
-    -- active keys: only highest priority of each key, and not our (stats) keys
+    -- 生效按键：每个键只取最高优先级，且排除本脚本自己的绑定
     local bindings = mp.get_property_native("input-bindings", {})
-    local active = {}  -- map: key-name -> bind-info
+    local active = {}  -- 映射：键名 -> 绑定信息
     for _, bind in pairs(bindings) do
         if bind.priority >= 0 and (
                not active[bind.key] or
@@ -527,9 +562,9 @@ local function get_kbinfo_lines()
         end
     end
 
-    -- make an array, find max key len, add sort keys (.subject/.mods[_count])
+    -- 生成数组，求键名最大长度，补排序字段（.subject/.mods[_count]）
     local ordered = {}
-    local kspaces = ""  -- as many spaces as the longest key name
+    local kspaces = ""  -- 空格数取最长键名
     for _, bind in pairs(active) do
         bind.subject = cmd_subject(bind.cmd)
         if bind.subject ~= "ignore" then
@@ -546,7 +581,7 @@ local function get_kbinfo_lines()
         return kspaces:sub(keyname_cells(key)) .. key
     end
 
-    -- sort by: subject, mod(ifier)s count, mods, key-len, lowercase-key, key
+    -- 排序：主题、修饰键数、修饰键、键名长度、小写键名、键名
     table.sort(ordered, function(a, b)
         if a.subject ~= b.subject then
             return a.subject < b.subject
@@ -559,14 +594,14 @@ local function get_kbinfo_lines()
         elseif a.key:lower() ~= b.key:lower() then
             return a.key:lower() < b.key:lower()
         else
-            return a.key > b.key  -- only case differs, lowercase first
+            return a.key > b.key  -- 仅大小写不同，小写优先
         end
     end)
 
-    -- key/subject pre/post formatting for terminal/ass.
-    -- key/subject alignment uses spaces (with mono font if ass)
-    -- word-wrapping is disabled for ass, or cut at 79 for the terminal
-    local LTR = string.char(0xE2, 0x80, 0x8E)  -- U+200E Left To Right mark
+    -- 终端/ASS 下键名与主题的前后缀格式。
+    -- 键名/主题对齐用空格（ASS 下用等宽字体）
+    -- ASS 下禁用自动换行，终端按 79 列截断
+    local LTR = string.char(0xE2, 0x80, 0x8E)  -- U+200E 从左到右标记
     local term = not o.use_ass
     local kpre = term and "" or format("{\\q2\\fn%s}%s", o.font_mono, LTR)
     local kpost = term and " " or format(" {\\fn%s}", o.font)
@@ -575,11 +610,11 @@ local function get_kbinfo_lines()
                                  o.font_mono, kspaces, o.font, 1.3*font_size)
     local spost = term and "" or format("{\\u0\\fs%d}%s", font_size, text_style())
 
-    -- create the display lines
+    -- 生成显示行
     local info_lines = {}
     local subject = nil
     for _, bind in ipairs(ordered) do
-        if bind.subject ~= subject then  -- new subject (title)
+        if bind.subject ~= subject then  -- 新的主题（标题）
             subject = bind.subject
             append(info_lines, "", {})
             append(info_lines, "", { prefix = spre .. subject .. spost })
@@ -594,7 +629,7 @@ end
 
 local function append_general_perfdata(s)
     for i, data in ipairs(mp.get_property_native("perf-info") or {}) do
-        append(s, data.text or data.value, {prefix="["..tostring(i).."] "..data.name..":"})
+        append(s, data.text or data.value, {prefix="["..tostring(i).."] "..(ZH.perf[data.name] or data.name).."："})
 
         if o.plot_perfdata and o.use_ass and data.value then
             local buf = perf_buffers[data.name]
@@ -613,21 +648,21 @@ local function append_display_sync(s)
         return
     end
 
-    local vspeed = append_property(s, "video-speed-correction", {prefix="DS:"})
+    local vspeed = append_property(s, "video-speed-correction", {prefix="显示同步："})
     if vspeed then
         append_property(s, "audio-speed-correction",
                         {prefix="/", nl="", indent=" ", prefix_sep=" ", no_prefix_markup=true})
     else
         append_property(s, "audio-speed-correction",
-                        {prefix="DS:" .. o.prefix_sep .. " - / ", prefix_sep=""})
+                        {prefix="显示同步：" .. o.prefix_sep .. " - / ", prefix_sep=""})
     end
 
-    append_property(s, "mistimed-frame-count", {prefix="Mistimed:", nl="",
+    append_property(s, "mistimed-frame-count", {prefix="错时帧：", nl="",
                                                 indent=o.prefix_sep .. o.prefix_sep})
-    append_property(s, "vo-delayed-frame-count", {prefix="Delayed:", nl="",
+    append_property(s, "vo-delayed-frame-count", {prefix="延迟帧：", nl="",
                                                   indent=o.prefix_sep .. o.prefix_sep})
 
-    -- As we need to plot some graphs we print jitter and ratio on their own lines
+    -- 需要画图，所以抖动与比率各占一行
     if not display_timer.oneshot and (o.plot_vsync_ratio or o.plot_vsync_jitter) and o.use_ass then
         local ratio_graph = ""
         local jitter_graph = ""
@@ -639,14 +674,14 @@ local function append_display_sync(s)
             jitter_graph = generate_graph(vsjitter_buf, vsjitter_buf.pos,
                                           vsjitter_buf.len, vsjitter_buf.max, nil, 0.8, 1)
         end
-        append_property(s, "vsync-ratio", {prefix="VSync Ratio:",
+        append_property(s, "vsync-ratio", {prefix="垂直同步比率：",
                                            suffix=o.prefix_sep .. ratio_graph})
-        append_property(s, "vsync-jitter", {prefix="VSync Jitter:",
+        append_property(s, "vsync-jitter", {prefix="垂直同步抖动：",
                                             suffix=o.prefix_sep .. jitter_graph})
     else
-        -- Since no graph is needed we can print ratio/jitter on the same line and save some space
-        local vr = append_property(s, "vsync-ratio", {prefix="VSync Ratio:"})
-        append_property(s, "vsync-jitter", {prefix="VSync Jitter:",
+        -- 不画图时比率/抖动可放同一行，节省空间
+        local vr = append_property(s, "vsync-ratio", {prefix="垂直同步比率："})
+        append_property(s, "vsync-jitter", {prefix="垂直同步抖动：",
                             nl=vr and "" or o.nl,
                             indent=vr and o.prefix_sep .. o.prefix_sep})
     end
@@ -660,7 +695,7 @@ local function append_filters(s, prop, prefix)
     for _,f in ipairs(mp.get_property_native(prop, {})) do
         local n = f.name
         if f.enabled ~= nil and not f.enabled then
-            n = n .. " (disabled)"
+            n = n .. "（已禁用）"
         end
 
         if f.label ~= nil then
@@ -694,20 +729,103 @@ local function append_filters(s, prop, prefix)
 end
 
 
+-- ==================== 文件路径显示 ====================
+-- 本节可直接修改：文案、前缀、截断预算都在这里。
+-- 在 "文件：" 行后补一行完整路径，仍遵守"不动原版段"的约定：
+--   * 路径取 path 属性；相对路径用 working-directory 拼成绝对路径，URL 原样显示
+--   * path 与 filename 相同（只写了裸文件名）时不重复显示
+--   * 超出屏幕宽度时中间省略：按字号估算每字宽度（ASCII 0.5 em、其余 1 em），
+--     保留盘符/目录头与文件名，避免 libass 自动换行把后面的行挤乱
+local PATH_PREFIX = "路径："
+
+-- 字符起点（UTF-8 续字节 0x80..0xBF 不是字符起点）
+local function char_starts(s)
+    local starts = {}
+    for i = 1, #s do
+        local b = s:byte(i)
+        if b < 0x80 or b >= 0xC0 then starts[#starts + 1] = i end
+    end
+    return starts
+end
+
+-- 以字号（em）为单位的估算宽度
+local function display_em(s)
+    local em = 0
+    for i = 1, #s do
+        local b = s:byte(i)
+        if b < 0x80 then
+            em = em + 0.5
+        elseif b >= 0xC0 then
+            em = em + 1
+        end
+    end
+    return em
+end
+
+-- 中间省略到 budget_em 以内
+local function middle_shorten(s, budget_em)
+    if display_em(s) <= budget_em then return s end
+    local starts = char_starts(s)
+    local n = #starts
+    local head, tail = math.floor(n * 0.45), math.floor(n * 0.45)
+    while head + tail > 0 do
+        local cand = s:sub(1, head > 0 and starts[head + 1] - 1 or 0)
+            .. "…" .. s:sub(starts[n - tail + 1])
+        if display_em(cand) <= budget_em then return cand end
+        if head >= tail then head = head - 1 else tail = tail - 1 end
+    end
+    return "…"
+end
+
+-- 一行能放多少 em：ASS 按 osd 宽度与字号，终端按 79 列
+-- 注意 font_size 是按 288/屏幕高 缩放后的 ASS 字号，实际像素高度约等于未缩放的 o.font_size，
+-- 故取两者较大值做保守估算，宁可多截一点也不让 libass 自动换行挤乱后面的行。
+local function path_budget_em()
+    if not o.use_ass then return 76 end
+    local w = mp.get_property_number("osd-width") or 0
+    local fs = math.max(font_size > 0 and font_size or 0, o.font_size or 0)
+    if w <= 0 or fs <= 0 then return 60 end
+    -- 预留 "路径：" 前缀与右侧边距（约 4 em）
+    return math.max(20, math.floor(w / fs * 0.95) - 4)
+end
+
+local function file_path_text()
+    local path = mp.get_property("path")
+    if not path or path == "" then return nil end
+    if path == mp.get_property("filename") then return nil end
+
+    -- 相对路径补工作目录，方便直接复制；URL（含 ://）与绝对路径不动
+    local is_url = path:find("://", 1, true) ~= nil
+    local is_abs = path:find("^%a:[/\\]") or path:find("^[/\\]")
+    if not is_url and not is_abs then
+        local wd = mp.get_property("working-directory")
+        if wd and wd ~= "" then
+            path = utils.join_path and utils.join_path(wd, path) or (wd .. "/" .. path)
+        end
+    end
+
+    return middle_shorten(path, path_budget_em())
+end
+
+
 local function add_header(s)
     s[#s+1] = text_style()
 end
 
 
 local function add_file(s, print_cache, print_tags)
-    append(s, "", {prefix="File:", nl="", indent=""})
+    append(s, "", {prefix="文件：", nl="", indent=""})
     append_property(s, "filename", {prefix_sep="", nl="", indent=""})
+    local file_path = file_path_text()
+    if file_path then
+        append(s, file_path, {prefix="路径："})
+    end
     if mp.get_property_osd("filename") ~= mp.get_property_osd("media-title") then
-        append_property(s, "media-title", {prefix="Title:"})
+        append_property(s, "media-title", {prefix="标题："})
     end
 
     if print_tags then
-        append_property(s, "duration", {prefix="Duration:"})
+        append_property(s, "duration", {prefix="时长："})
         local tags = mp.get_property_native("display-tags")
         local tags_displayed = 0
         for _, tag in ipairs(tags) do
@@ -725,7 +843,7 @@ local function add_file(s, print_cache, print_tags)
     local ed_cond = (edition and editions > 1)
     if ed_cond then
         append_property(s, "edition-list/" .. tostring(edition) .. "/title",
-                       {prefix="Edition:"})
+                       {prefix="版本："})
         append_property(s, "edition-list/count",
                         {prefix="(" .. tostring(edition + 1) .. "/", suffix=")", nl="",
                          indent=" ", prefix_sep=" ", no_prefix_markup=true})
@@ -733,15 +851,15 @@ local function add_file(s, print_cache, print_tags)
 
     local ch_index = mp.get_property_number("chapter")
     if ch_index and ch_index >= 0 then
-        append_property(s, "chapter-list/" .. tostring(ch_index) .. "/title", {prefix="Chapter:",
+        append_property(s, "chapter-list/" .. tostring(ch_index) .. "/title", {prefix="章节：",
                         nl=ed_cond and "" or o.nl})
         append_property(s, "chapter-list/count",
                         {prefix="(" .. tostring(ch_index + 1) .. " /", suffix=")", nl="",
                          indent=" ", prefix_sep=" ", no_prefix_markup=true})
     end
 
-    local fs = append_property(s, "file-size", {prefix="Size:"})
-    append_property(s, "file-format", {prefix="Format/Protocol:",
+    local fs = append_property(s, "file-size", {prefix="大小："})
+    append_property(s, "file-format", {prefix="格式/协议：",
                                        nl=fs and "" or o.nl,
                                        indent=fs and o.prefix_sep .. o.prefix_sep})
 
@@ -751,14 +869,14 @@ local function add_file(s, print_cache, print_tags)
 
     local demuxer_cache = mp.get_property_native("demuxer-cache-state", {})
     if demuxer_cache["fw-bytes"] then
-        demuxer_cache = demuxer_cache["fw-bytes"] -- returns bytes
+        demuxer_cache = demuxer_cache["fw-bytes"] -- 返回字节数
     else
         demuxer_cache = 0
     end
     local demuxer_secs = mp.get_property_number("demuxer-cache-duration", 0)
     if demuxer_cache + demuxer_secs > 0 then
-        append(s, utils.format_bytes_humanized(demuxer_cache), {prefix="Total Cache:"})
-        append(s, format("%.1f", demuxer_secs), {prefix="(", suffix=" sec)", nl="",
+        append(s, utils.format_bytes_humanized(demuxer_cache), {prefix="总缓存："})
+        append(s, format("%.1f", demuxer_secs), {prefix="(", suffix=" 秒）", nl="",
                no_prefix_markup=true, prefix_sep="", indent=o.prefix_sep})
     end
 end
@@ -802,7 +920,7 @@ local function append_resolution(s, r, prefix, w_prop, h_prop, video_res)
                                                indent=o.prefix_sep, prefix_sep="",
                                                no_prefix_markup=true})
         end
-        -- We can skip crop if it is the same as video decoded resolution
+        -- 裁剪与解码分辨率相同时可以省略
         if r["crop-w"] and (not video_res or
                             not crop_noop(r[w_prop], r[h_prop], r)) then
             append(s, format("[x: %d, y: %d, w: %d, h: %d]",
@@ -842,8 +960,8 @@ local function append_hdr(s, hdr, video_out)
         return val and math.abs(val - target) > 1e-4
     end
 
-    -- If we are printing video out parameters it is just display, not mastering
-    local display_prefix = video_out and "Display:" or "Mastering display:"
+    -- 输出视频参数时这里只是显示器信息，不是母版信息
+    local display_prefix = video_out and "显示：" or "母版显示："
 
     local indent = ""
     local has_dml = has(hdr["min-luma"], 0.203) or has(hdr["max-luma"], 203)
@@ -851,21 +969,21 @@ local function append_hdr(s, hdr, video_out)
     local has_fall = hdr["max-fall"] and hdr["max-fall"] > 0
 
     if has_dml or has_cll or has_fall then
-        append(s, "", {prefix=video_out and "" or "HDR10:", prefix_sep=video_out and "" or nil})
+        append(s, "", {prefix=video_out and "" or "HDR10：", prefix_sep=video_out and "" or nil})
         if has_dml then
-            -- libplacebo uses close to zero values as "defined zero"
+            -- libplacebo 把接近 0 的值当作"已定义的 0"
             hdr["min-luma"] = hdr["min-luma"] <= 1e-6 and 0 or hdr["min-luma"]
             append(s, format("%.2g / %.0f", hdr["min-luma"], hdr["max-luma"]),
                 {prefix=display_prefix, suffix=" cd/m²", nl="", indent=indent})
             indent = o.prefix_sep .. o.prefix_sep
         end
         if has_cll then
-            append(s, string.format("%.0f", hdr["max-cll"]), {prefix="MaxCLL:",
+            append(s, string.format("%.0f", hdr["max-cll"]), {prefix="最大内容亮度：",
                                     suffix=" cd/m²", nl="", indent=indent})
             indent = o.prefix_sep .. o.prefix_sep
         end
         if has_fall then
-            append(s, hdr["max-fall"], {prefix="MaxFALL:", suffix=" cd/m²", nl="",
+            append(s, hdr["max-fall"], {prefix="最大帧平均亮度：", suffix=" cd/m²", nl="",
                                         indent=indent})
         end
     end
@@ -874,21 +992,21 @@ local function append_hdr(s, hdr, video_out)
 
     if hdr["scene-max-r"] or hdr["scene-max-g"] or
        hdr["scene-max-b"] or hdr["scene-avg"] then
-        append(s, "", {prefix="HDR10+:"})
+        append(s, "", {prefix="HDR10+："})
         append(s, format("%.1f / %.1f / %.1f", hdr["scene-max-r"] or 0,
                          hdr["scene-max-g"] or 0, hdr["scene-max-b"] or 0),
-               {prefix="MaxRGB:", suffix=" cd/m²", nl="", indent=""})
+               {prefix="最大RGB：", suffix=" cd/m²", nl="", indent=""})
         append(s, format("%.1f", hdr["scene-avg"] or 0),
-               {prefix="Avg:", suffix=" cd/m²", nl="", indent=indent})
+               {prefix="平均：", suffix=" cd/m²", nl="", indent=indent})
     end
 
     if hdr["max-pq-y"] and hdr["avg-pq-y"] then
-        append(s, "", {prefix="PQ(Y):"})
+        append(s, "", {prefix="PQ(Y)："})
         append(s, format("%.2f cd/m² (%.2f%% PQ)", pq_eotf(hdr["max-pq-y"]),
-                         hdr["max-pq-y"] * 100), {prefix="Max:", nl="",
+                         hdr["max-pq-y"] * 100), {prefix="最大：", nl="",
                          indent=""})
         append(s, format("%.2f cd/m² (%.2f%% PQ)", pq_eotf(hdr["avg-pq-y"]),
-                         hdr["avg-pq-y"] * 100), {prefix="Avg:", nl="",
+                         hdr["avg-pq-y"] * 100), {prefix="平均：", nl="",
                          indent=indent})
     end
 end
@@ -899,26 +1017,26 @@ local function append_img_params(s, r, ro)
         return
     end
 
-    append_resolution(s, r, "Resolution:", "w", "h", true)
+    append_resolution(s, r, "分辨率：", "w", "h", true)
     if ro and (r["w"] ~= ro["dw"] or r["h"] ~= ro["dh"]) then
         if ro["crop-w"] and (crop_noop(r["w"], r["h"], ro) or crop_equal(r, ro)) then
             ro["crop-w"] = nil
         end
-        append_resolution(s, ro, "Output Resolution:", "dw", "dh")
+        append_resolution(s, ro, "输出分辨率：", "dw", "dh")
     end
 
     local indent = o.prefix_sep .. o.prefix_sep
     r = ro or r
 
     local pixel_format = r["hw-pixelformat"] or r["pixelformat"]
-    append(s, pixel_format, {prefix="Format:"})
-    append(s, r["colorlevels"], {prefix="Levels:", nl="", indent=indent})
+    append(s, pixel_format, {prefix="格式："})
+    append(s, r["colorlevels"], {prefix="色彩范围：", nl="", indent=indent})
     if r["chroma-location"] and r["chroma-location"] ~= "unknown" then
-        append(s, r["chroma-location"], {prefix="Chroma Loc:", nl="", indent=indent})
+        append(s, r["chroma-location"], {prefix="色度位置：", nl="", indent=indent})
     end
 
-    -- Group these together to save vertical space
-    append(s, r["colormatrix"], {prefix="Colormatrix:"})
+    -- 放在一起以节省纵向空间
+    append(s, r["colormatrix"], {prefix="色彩矩阵："})
     if r["prim-red-x"] or r["prim-red-y"] or
        r["prim-green-x"] or r["prim-green-y"] or
        r["prim-blue-x"] or r["prim-blue-y"] or
@@ -928,13 +1046,13 @@ local function append_img_params(s, r, ro)
                                 r["prim-green-x"] or 0, r["prim-green-y"] or 0,
                                 r["prim-blue-x"] or 0, r["prim-blue-y"] or 0,
                                 r["prim-white-x"] or 0, r["prim-white-y"] or 0),
-            {prefix="Primaries:", nl="", indent=indent})
+            {prefix="色域基色：", nl="", indent=indent})
         append(s, r["primaries"], {prefix="in", nl="", indent=" ", prefix_sep=" ",
                                    no_prefix_markup=true})
     else
-        append(s, r["primaries"], {prefix="Primaries:", nl="", indent=indent})
+        append(s, r["primaries"], {prefix="色域基色：", nl="", indent=indent})
     end
-    append(s, r["gamma"], {prefix="Transfer:", nl="", indent=indent})
+    append(s, r["gamma"], {prefix="传输函数：", nl="", indent=indent})
 end
 
 
@@ -943,9 +1061,9 @@ local function append_fps(s, prop, eprop)
     local efps = mp.get_property_osd(eprop)
     local single = eprop == "" or (fps ~= "" and efps ~= "" and fps == efps)
     local unit = prop == "display-fps" and " Hz" or " fps"
-    local suffix = single and "" or " (specified)"
-    local esuffix = single and "" or " (estimated)"
-    local prefix = prop == "display-fps" and "Refresh Rate:" or "Frame Rate:"
+    local suffix = single and "" or "（指定）"
+    local esuffix = single and "" or "（估计）"
+    local prefix = prop == "display-fps" and "刷新率：" or "帧率："
     local nl = o.nl
     local indent = o.indent
 
@@ -968,24 +1086,24 @@ local function add_video_out(s)
         return
     end
 
-    append(s, "", {prefix="Display:", nl=o.nl .. o.nl, indent=""})
+    append(s, "", {prefix="显示：", nl=o.nl .. o.nl, indent=""})
     append(s, vo, {prefix_sep="", nl="", indent=""})
 
     append_property(s, "display-names", {prefix_sep="", prefix="(", suffix=")",
                     no_prefix_markup=true, nl="", indent=" "}, nil, true)
     append(s, mp.get_property_native("current-gpu-context"),
-           {prefix="Context:", nl="", indent=o.prefix_sep .. o.prefix_sep})
-    append_property(s, "avsync", {prefix="A-V:"})
+           {prefix="渲染后端：", nl="", indent=o.prefix_sep .. o.prefix_sep})
+    append_property(s, "avsync", {prefix="音视频同步："})
     append_fps(s, "display-fps", "estimated-display-fps")
     if append_property(s, "decoder-frame-drop-count",
-                       {prefix="Dropped Frames:", suffix=" (decoder)"}) then
-        append_property(s, "frame-drop-count", {suffix=" (output)", nl="", indent=""})
+                       {prefix="丢帧：", suffix="（解码器）"}) then
+        append_property(s, "frame-drop-count", {suffix="（输出）", nl="", indent=""})
     end
     append_display_sync(s)
     append_perfdata(nil, s, false)
 
     if mp.get_property_native("deinterlace-active") then
-        append_property(s, "deinterlace", {prefix="Deinterlacing:"})
+        append_property(s, "deinterlace", {prefix="去隔行："})
     end
 
     local scale = nil
@@ -997,7 +1115,7 @@ local function add_video_out(s)
     local rt = mp.get_property_native("video-target-params")
     local r = rt or {}
 
-    -- Add window scale
+    -- 附上窗口缩放比
     r["s"] = scale
     r["crop-x"] = od["ml"]
     r["crop-y"] = od["mt"]
@@ -1007,7 +1125,7 @@ local function add_video_out(s)
     if not rt then
         r["w"] = r["crop-w"]
         r["h"] = r["crop-h"]
-        append_resolution(s, r, "Resolution:", "w", "h", true)
+        append_resolution(s, r, "分辨率：", "w", "h", true)
         return
     end
 
@@ -1019,7 +1137,7 @@ end
 local function add_video(s)
     local r = mp.get_property_native("video-params")
     local ro = mp.get_property_native("video-out-params")
-    -- in case of e.g. lavfi-complex there can be no input video, only output
+    -- 例如 lavfi-complex 时可能没有输入视频，只有输出
     if not r then
         r = ro
     end
@@ -1028,7 +1146,7 @@ local function add_video(s)
     end
 
     local track = mp.get_property_native("current-tracks/video")
-    local track_type = (track and track.image) and "Image:" or "Video:"
+    local track_type = (track and track.image) and "图像：" or "视频："
     append(s, "", {prefix=track_type, nl=o.nl .. o.nl, indent=""})
     if track and append(s, track["codec-desc"], {prefix_sep="", nl="", indent=""}) then
         append(s, track["codec-profile"], {prefix="[", nl="", indent=" ", prefix_sep="",
@@ -1037,13 +1155,13 @@ local function add_video(s)
             append(s, track["decoder"], {prefix="[", nl="", indent=" ", prefix_sep="",
                    no_prefix_markup=true, suffix="]"})
         end
-        append_property(s, "hwdec-current", {prefix="HW:", nl="",
+        append_property(s, "hwdec-current", {prefix="硬解：", nl="",
                         indent=o.prefix_sep .. o.prefix_sep,
                         no_prefix_markup=false, suffix=""}, {no=true, [""]=true}, true)
     end
     local has_prefix = false
     if o.show_frame_info then
-        if append_property(s, "estimated-frame-number", {prefix="Frame:"}) then
+        if append_property(s, "estimated-frame-number", {prefix="帧："}) then
             append_property(s, "estimated-frame-count", {indent=" / ", nl="",
                                                         prefix_sep=""})
             has_prefix = true
@@ -1052,26 +1170,26 @@ local function add_video(s)
         if frame_info and frame_info["picture-type"] then
             local attrs = has_prefix and {prefix="(", suffix=")", indent=" ", nl="",
                                           prefix_sep="", no_prefix_markup=true}
-                                      or {prefix="Picture Type:"}
+                                      or {prefix="画面类型："}
             append(s, frame_info["picture-type"], attrs)
             has_prefix = true
         end
         if frame_info and frame_info["interlaced"] then
             local attrs = has_prefix and {indent=" ", nl="", prefix_sep=""}
-                                      or {prefix="Picture Type:"}
-            append(s, "Interlaced", attrs)
+                                      or {prefix="画面类型："}
+            append(s, "隔行扫描", attrs)
         end
 
         local timecodes = {
             ["gop-timecode"] = "GOP",
             ["smpte-timecode"] = "SMPTE",
-            ["estimated-smpte-timecode"] = "Estimated SMPTE",
+            ["estimated-smpte-timecode"] = "估计 SMPTE",
         }
         for prop, name in pairs(timecodes) do
             if frame_info and frame_info[prop] then
-                local attrs = has_prefix and {prefix=name .. " Timecode:",
+                local attrs = has_prefix and {prefix=name .. " 时间码：",
                                               indent=o.prefix_sep .. o.prefix_sep, nl=""}
-                                          or {prefix=name .. " Timecode:"}
+                                          or {prefix=name .. " 时间码："}
                 append(s, frame_info[prop], attrs)
                 break
             end
@@ -1083,14 +1201,14 @@ local function add_video(s)
     end
     append_img_params(s, r, ro)
     append_hdr(s, ro)
-    append_property(s, "video-bitrate", {prefix="Bitrate:"})
-    append_filters(s, "vf", "Filters:")
+    append_property(s, "video-bitrate", {prefix="码率："})
+    append_filters(s, "vf", "滤镜：")
 end
 
 
 local function add_audio(s)
     local r = mp.get_property_native("audio-params")
-    -- in case of e.g. lavfi-complex there can be no input audio, only output
+    -- 例如 lavfi-complex 时可能没有输入音频，只有输出
     local ro = mp.get_property_native("audio-out-params") or r
     r = r or ro
     if not r then
@@ -1103,7 +1221,7 @@ local function add_audio(s)
         return (a == b or a == nil) and a or (a .. " ➜ " .. b)
     end
 
-    append(s, "", {prefix="Audio:", nl=o.nl .. o.nl, indent=""})
+    append(s, "", {prefix="音频：", nl=o.nl .. o.nl, indent=""})
     local track = mp.get_property_native("current-tracks/audio")
     if track then
         append(s, track["codec-desc"], {prefix_sep="", nl="", indent=""})
@@ -1114,26 +1232,26 @@ local function add_audio(s)
                    no_prefix_markup=true, suffix="]"})
         end
     end
-    append_property(s, "current-ao", {prefix="AO:", nl="",
+    append_property(s, "current-ao", {prefix="音频输出：", nl="",
                                       indent=o.prefix_sep .. o.prefix_sep})
-    local dev = append_property(s, "audio-device", {prefix="Device:"})
-    local ao_mute = mp.get_property_native("ao-mute") and " (Muted)" or ""
-    append_property(s, "ao-volume", {prefix="AO Volume:", suffix="%" .. ao_mute,
+    local dev = append_property(s, "audio-device", {prefix="设备："})
+    local ao_mute = mp.get_property_native("ao-mute") and "（静音）" or ""
+    append_property(s, "ao-volume", {prefix="音量：", suffix="%" .. ao_mute,
                                      nl=dev and "" or o.nl,
                                      indent=dev and o.prefix_sep .. o.prefix_sep})
     if math.abs(mp.get_property_native("audio-delay")) > 1e-6 then
-        append_property(s, "audio-delay", {prefix="A-V delay:"})
+        append_property(s, "audio-delay", {prefix="音视频延迟："})
     end
-    local cc = append(s, merge(r, ro, "channel-count"), {prefix="Channels:"})
-    append(s, merge(r, ro, "format"), {prefix="Format:", nl=cc and "" or o.nl,
+    local cc = append(s, merge(r, ro, "channel-count"), {prefix="声道数："})
+    append(s, merge(r, ro, "format"), {prefix="格式：", nl=cc and "" or o.nl,
                             indent=cc and o.prefix_sep .. o.prefix_sep})
-    append(s, merge(r, ro, "samplerate"), {prefix="Sample Rate:", suffix=" Hz"})
-    append_property(s, "audio-bitrate", {prefix="Bitrate:"})
-    append_filters(s, "af", "Filters:")
+    append(s, merge(r, ro, "samplerate"), {prefix="采样率：", suffix=" Hz"})
+    append_property(s, "audio-bitrate", {prefix="码率："})
+    append_filters(s, "af", "滤镜：")
 end
 
 
--- Determine whether ASS formatting shall/can be used and set formatting sequences
+-- 判断是否使用 ASS 格式，并设置对应的转义序列
 local function eval_ass_formatting()
     o.use_ass = o.ass_formatting and has_vo_window()
     if o.use_ass then
@@ -1155,9 +1273,9 @@ local function eval_ass_formatting()
     end
 end
 
--- split str into a table
--- example: local t = split(s, "\n")
--- plain: whether pat is a plain string (default false - pat is a pattern)
+-- 把字符串拆成表
+-- 例：local t = split(s, "\n")
+-- plain：pat 是否为普通字符串（默认 false，即按模式匹配）
 local function split(str, pat, plain)
     local init = 1
     local r, i, find, sub = {}, 1, string.find, string.sub
@@ -1169,21 +1287,21 @@ local function split(str, pat, plain)
     return r
 end
 
--- Composes the output with header and scrollable content
--- Returns string of the finished page and the actually chosen offset
+-- 把标题与可滚动内容组合成输出
+-- 返回整页字符串与实际采用的偏移
 --
--- header      : table of the header where each entry is one line
--- content     : table of the content where each entry is one line
--- apply_scroll: scroll the content
+-- header      ：标题表，每项一行
+-- content     ：内容表，每项一行
+-- apply_scroll：是否滚动内容
 local function finalize_page(header, content, apply_scroll)
     local term_height = mp.get_property_native("term-size/h", 24)
     local from, to = 1, #content
     if apply_scroll then
-        -- Up to 40 lines for libass because it can put a big performance toll on
-        -- libass to process many lines which end up outside (below) the screen.
-        -- In the terminal reduce height by 2 for the status line (can be more then one line)
+        -- ASS 下最多 40 行，行太多会明显拖累 libass
+        -- （超出屏幕下方的行照样要处理）
+        -- 终端下高度减 2 留给状态行（状态行可能多行）
         local max_content_lines = (o.use_ass and 40 or term_height - 2) - #header
-        -- in the terminal the scrolling should stop once the last line is visible
+        -- 终端下滚动到最后一行可见即停止
         local max_offset = o.use_ass and #content or #content - max_content_lines + 1
         from = max(1, min((pages[curr_page].offset or 1), max_offset))
         to = min(#content, from + max_content_lines - 1)
@@ -1198,7 +1316,7 @@ local function finalize_page(header, content, apply_scroll)
     return output, from
 end
 
--- Returns an ASS string with "normal" stats
+-- 返回"常规"统计的 ASS 字符串
 local function default_stats()
     local stats = {}
     eval_ass_formatting()
@@ -1210,7 +1328,7 @@ local function default_stats()
     return finalize_page({}, stats, false)
 end
 
--- Returns an ASS string with extended VO stats
+-- 返回扩展视频输出统计的 ASS 字符串
 local function vo_stats()
     local header, content = {}, {}
     eval_ass_formatting()
@@ -1266,29 +1384,29 @@ local function add_track(c, t, i)
         return
     end
 
-    local type = t.image and "Image" or t["type"]:sub(1, 1):upper() .. t["type"]:sub(2)
+    local type = t.image and "图像" or (ZH.track[t["type"]] or t["type"])
     append(c, "", {prefix=type .. ":", nl=o.nl .. o.nl, indent=""})
     append(c, t["title"], {prefix_sep="", nl="", indent=""})
-    append(c, t["id"], {prefix="ID:"})
-    append(c, t["src-id"], {prefix="Demuxer ID:", nl="", indent=o.prefix_sep .. o.prefix_sep})
-    append(c, t["program-id"], {prefix="Program ID:", nl="", indent=o.prefix_sep .. o.prefix_sep})
-    append(c, t["ff-index"], {prefix="FFmpeg Index:", nl="", indent=o.prefix_sep .. o.prefix_sep})
-    append(c, t["external-filename"], {prefix="File:"})
-    append(c, "", {prefix="Flags:"})
+    append(c, t["id"], {prefix="ID："})
+    append(c, t["src-id"], {prefix="解复用器 ID：", nl="", indent=o.prefix_sep .. o.prefix_sep})
+    append(c, t["program-id"], {prefix="节目ID：", nl="", indent=o.prefix_sep .. o.prefix_sep})
+    append(c, t["ff-index"], {prefix="FFmpeg索引：", nl="", indent=o.prefix_sep .. o.prefix_sep})
+    append(c, t["external-filename"], {prefix="文件："})
+    append(c, "", {prefix="标志："})
     local flags = {"default", "forced", "dependent", "visual-impaired",
                    "hearing-impaired", "original", "commentary", "image",
                    "albumart", "external"}
     local any = false
     for _, flag in ipairs(flags) do
         if t[flag] then
-            append(c, flag, {prefix=any and ", " or "", nl="", indent="", prefix_sep=""})
+            append(c, ZH.flag[flag] or flag, {prefix=any and ", " or "", nl="", indent="", prefix_sep=""})
             any = true
         end
     end
     if not any then
         table.remove(c)
     end
-    if append(c, t["codec-desc"], {prefix="Codec:"}) then
+    if append(c, t["codec-desc"], {prefix="编解码器："}) then
         append(c, t["codec-profile"], {prefix="[", nl="", indent=" ", prefix_sep="",
                no_prefix_markup=true, suffix="]"})
         if t["codec"] ~= t["decoder"] then
@@ -1296,50 +1414,50 @@ local function add_track(c, t, i)
                    no_prefix_markup=true, suffix="]"})
         end
     end
-    append(c, t["lang"], {prefix="Language:"})
-    append(c, t["demux-channel-count"], {prefix="Channels:"})
-    append(c, t["demux-channels"], {prefix="Channel Layout:"})
-    append(c, t["demux-samplerate"], {prefix="Sample Rate:", suffix=" Hz"})
+    append(c, t["lang"], {prefix="语言："})
+    append(c, t["demux-channel-count"], {prefix="声道数："})
+    append(c, t["demux-channels"], {prefix="声道布局："})
+    append(c, t["demux-samplerate"], {prefix="采样率：", suffix=" Hz"})
     local function B(b) return b and string.format("%.2f", b / 1024) end
-    local bitrate = append(c, B(t["demux-bitrate"]), {prefix="Bitrate:", suffix=" kbps"})
-    append(c, B(t["hls-bitrate"]), {prefix="HLS Bitrate:", suffix=" kbps",
+    local bitrate = append(c, B(t["demux-bitrate"]), {prefix="码率：", suffix=" kbps"})
+    append(c, B(t["hls-bitrate"]), {prefix="HLS 码率：", suffix=" kbps",
                                     nl=bitrate and "" or o.nl,
                                     indent=bitrate and o.prefix_sep .. o.prefix_sep})
     append_resolution(c, {w=t["demux-w"], h=t["demux-h"], ["crop-x"]=t["demux-crop-x"],
                           ["crop-y"]=t["demux-crop-y"], ["crop-w"]=t["demux-crop-w"],
-                          ["crop-h"]=t["demux-crop-h"]}, "Resolution:")
+                          ["crop-h"]=t["demux-crop-h"]}, "分辨率：")
     if not t["image"] and t["demux-fps"] then
         append_fps(c, "track-list/" .. i .. "/demux-fps", "")
     end
-    append(c, t["format-name"], {prefix="Format:"})
-    append(c, t["demux-rotation"], {prefix="Rotation:"})
+    append(c, t["format-name"], {prefix="格式："})
+    append(c, t["demux-rotation"], {prefix="旋转："})
     if t["demux-par"] then
         local num, den = float2rational(t["demux-par"])
-        append(c, string.format("%d:%d", num, den), {prefix="Pixel Aspect Ratio:"})
+        append(c, string.format("%d:%d", num, den), {prefix="像素宽高比："})
     end
     local track_rg = t["replaygain-track-peak"] ~= nil or t["replaygain-track-gain"] ~= nil
     local album_rg = t["replaygain-album-peak"] ~= nil or t["replaygain-album-gain"] ~= nil
     if track_rg or album_rg then
-        append(c, "", {prefix="Replay Gain:"})
+        append(c, "", {prefix="重放增益："})
     end
     if track_rg then
-        append(c, "", {prefix="Track:", indent=o.indent .. o.prefix_sep, prefix_sep=""})
-        append(c, t["replaygain-track-gain"], {prefix="Gain:", suffix=" dB",
+        append(c, "", {prefix="音轨：", indent=o.indent .. o.prefix_sep, prefix_sep=""})
+        append(c, t["replaygain-track-gain"], {prefix="增益：", suffix=" dB",
                                                nl="", indent=o.prefix_sep})
-        append(c, t["replaygain-track-peak"], {prefix="Peak:", suffix=" dB",
+        append(c, t["replaygain-track-peak"], {prefix="峰值：", suffix=" dB",
                                                nl="", indent=o.prefix_sep})
     end
     if album_rg then
-        append(c, "", {prefix="Album:", indent=o.indent .. o.prefix_sep, prefix_sep=""})
-        append(c, t["replaygain-album-gain"], {prefix="Gain:", suffix=" dB",
+        append(c, "", {prefix="专辑：", indent=o.indent .. o.prefix_sep, prefix_sep=""})
+        append(c, t["replaygain-album-gain"], {prefix="增益：", suffix=" dB",
                                                nl="", indent=o.prefix_sep})
-        append(c, t["replaygain-album-peak"], {prefix="Peak:", suffix=" dB",
+        append(c, t["replaygain-album-peak"], {prefix="峰值：", suffix=" dB",
                                                nl="", indent=o.prefix_sep})
     end
     if t["dolby-vision-profile"] or t["dolby-vision-level"] then
-        append(c, "", {prefix="Dolby Vision:"})
-        append(c, t["dolby-vision-profile"], {prefix="Profile:", nl="", indent=""})
-        append(c, t["dolby-vision-level"], {prefix="Level:", nl="",
+        append(c, "", {prefix="杜比视界："})
+        append(c, t["dolby-vision-profile"], {prefix="配置文件：", nl="", indent=""})
+        append(c, t["dolby-vision-level"], {prefix="级别：", nl="",
                                             indent=t["dolby-vision-profile"] and
                                             o.prefix_sep .. o.prefix_sep or ""})
     end
@@ -1380,24 +1498,24 @@ local function opt_time(t)
     return "?"
 end
 
--- Returns an ASS string with stats about the demuxer cache etc.
+-- 返回解复用缓存等统计的 ASS 字符串
 local function cache_stats()
     local stats = {}
 
     eval_ass_formatting()
     add_header(stats)
-    append(stats, "", {prefix="Cache Info:", nl="", indent=""})
+    append(stats, "", {prefix="缓存信息：", nl="", indent=""})
 
     local info = mp.get_property_native("demuxer-cache-state")
     if info == nil then
-        append(stats, "Unavailable.", {})
+        append(stats, "不可用。", {})
         return finalize_page({}, stats, false)
     end
 
     local a = info["reader-pts"]
     local b = info["cache-end"]
 
-    append(stats, opt_time(a) .. " - " .. opt_time(b), {prefix = "Packet Queue:"})
+    append(stats, opt_time(a) .. " - " .. opt_time(b), {prefix = "数据包队列："})
 
     local r = nil
     if a ~= nil and b ~= nil then
@@ -1411,22 +1529,22 @@ local function cache_stats()
                                  nil, 0.8, 1)
         r_graph = o.prefix_sep .. r_graph
     end
-    append(stats, opt_time(r), {prefix = "Readahead:", suffix = r_graph})
+    append(stats, opt_time(r), {prefix = "预读：", suffix = r_graph})
 
-    -- These states are not necessarily exclusive. They're about potentially
-    -- separate mechanisms, whose states may be decoupled.
+    -- 这些状态不一定互斥，它们描述的是可能
+    -- 彼此独立的机制，状态可能解耦。
     local state = "reading"
     local seek_ts = info["debug-seeking"]
     if seek_ts ~= nil then
-        state = "seeking (to " .. mp.format_time(seek_ts) .. ")"
+        state = "定位中（跳至 " .. mp.format_time(seek_ts) .. "）"
     elseif info["eof"] == true then
-        state = "eof"
+        state = "文件尾"
     elseif info["underrun"] then
-        state = "underrun"
+        state = "缓存不足"
     elseif info["idle"]  == true then
-        state = "inactive"
+        state = "空闲"
     end
-    append(stats, state, {prefix = "State:"})
+    append(stats, state, {prefix = "状态："})
 
     local speed = info["raw-input-rate"] or 0
     local speed_graph = nil
@@ -1436,44 +1554,44 @@ local function cache_stats()
                                      nil, 0.8, 1)
         speed_graph = o.prefix_sep .. speed_graph
     end
-    append(stats, utils.format_bytes_humanized(speed) .. "/s", {prefix="Speed:",
+    append(stats, utils.format_bytes_humanized(speed) .. "/s", {prefix="速度：",
         suffix=speed_graph})
 
     append(stats, utils.format_bytes_humanized(info["total-bytes"]),
-           {prefix = "Total RAM:"})
+           {prefix = "总内存："})
     append(stats, utils.format_bytes_humanized(info["fw-bytes"]),
-           {prefix = "Forward RAM:"})
+           {prefix = "前向缓存："})
 
     local fc = info["file-cache-bytes"]
     if fc ~= nil then
         fc = utils.format_bytes_humanized(fc)
     else
-        fc = "(disabled)"
+        fc = "（已禁用）"
     end
-    append(stats, fc, {prefix = "Disk Cache:"})
+    append(stats, fc, {prefix = "磁盘缓存："})
 
-    append(stats, info["debug-low-level-seeks"], {prefix = "Media Seeks:"})
-    append(stats, info["debug-byte-level-seeks"], {prefix = "Stream Seeks:"})
+    append(stats, info["debug-low-level-seeks"], {prefix = "媒体跳转："})
+    append(stats, info["debug-byte-level-seeks"], {prefix = "流跳转："})
 
-    append(stats, "", {prefix="Ranges:", nl=o.nl .. o.nl, indent=""})
+    append(stats, "", {prefix="范围：", nl=o.nl .. o.nl, indent=""})
 
-    append(stats, info["bof-cached"] and "yes" or "no",
-           {prefix = "Start Cached:"})
-    append(stats, info["eof-cached"] and "yes" or "no",
-           {prefix = "End Cached:"})
+    append(stats, info["bof-cached"] and "是" or "否",
+           {prefix = "起始已缓存："})
+    append(stats, info["eof-cached"] and "是" or "否",
+           {prefix = "结束已缓存："})
 
     local ranges = info["seekable-ranges"] or {}
     for n, range in ipairs(ranges) do
         append(stats, mp.format_time(range["start"]) .. " - " ..
                       mp.format_time(range["end"]),
-               {prefix = format("Range %s:", n)})
+               {prefix = format("区间 %s：", n)})
     end
 
     return finalize_page({}, stats, false)
 end
 
--- Record 1 sample of cache statistics.
--- (Unlike record_data(), this does not return a function, but runs directly.)
+-- 记录一次缓存统计样本。
+-- （与 record_data() 不同，这里直接执行，不返回函数。）
 local function record_cache_stats()
     local info = mp.get_property_native("demuxer-cache-state")
     if info == nil then
@@ -1492,19 +1610,19 @@ end
 cache_recorder_timer = mp.add_periodic_timer(0.25, record_cache_stats)
 cache_recorder_timer:kill()
 
--- Current page and <page key>:<page function> mapping
+-- 当前页面与 <页面按键>:<页面函数> 的映射
 curr_page = o.key_page_1
 pages = {
-    [o.key_page_1] = { idx = 1, f = default_stats, desc = "Default" },
-    [o.key_page_2] = { idx = 2, f = vo_stats, desc = "Extended Frame Timings", scroll = true },
-    [o.key_page_3] = { idx = 3, f = cache_stats, desc = "Cache Statistics" },
-    [o.key_page_4] = { idx = 4, f = keybinding_info, desc = "Active Key Bindings", scroll = true },
-    [o.key_page_5] = { idx = 5, f = track_info, desc = "Tracks Info", scroll = true },
-    [o.key_page_0] = { idx = 0, f = perf_stats, desc = "Internal Performance Info", scroll = true },
+    [o.key_page_1] = { idx = 1, f = default_stats, desc = "默认" },
+    [o.key_page_2] = { idx = 2, f = vo_stats, desc = "扩展帧耗时", scroll = true },
+    [o.key_page_3] = { idx = 3, f = cache_stats, desc = "缓存统计" },
+    [o.key_page_4] = { idx = 4, f = keybinding_info, desc = "当前按键绑定", scroll = true },
+    [o.key_page_5] = { idx = 5, f = track_info, desc = "轨道信息", scroll = true },
+    [o.key_page_0] = { idx = 0, f = perf_stats, desc = "内部性能信息", scroll = true },
 }
 
 
--- Returns a function to record vsratio/jitter with the specified `skip` value
+-- 返回一个函数，按指定 `skip` 记录 vsratio/jitter
 local function record_data(skip)
     init_buffers()
     skip = max(skip, 0)
@@ -1537,10 +1655,10 @@ local function record_data(skip)
     end
 end
 
--- Call the function for `page` and print it to OSD
+-- 调用 `page` 对应的函数并输出到 OSD
 local function print_page(page, after_scroll)
-    -- the page functions assume we start in ass-enabled mode.
-    -- that's true for mp.set_osd_ass, but not for mp.osd_message.
+    -- 页面函数假定当前已启用 ASS 模式。
+    -- mp.set_osd_ass 满足，mp.osd_message 不满足。
     local ass_content = pages[page].f(after_scroll)
     if o.persistent_overlay then
         mp.set_osd_ass(0, 0, ass_content)
@@ -1558,8 +1676,8 @@ update_scale = function ()
         scale_with_video = o.vidscale == "yes"
     end
 
-    -- Calculate scaled metrics.
-    -- Make font_size=n the same size as --osd-font-size=n.
+    -- 计算缩放后的度量值。
+    -- 让 font_size=n 与 --osd-font-size=n 视觉一致。
     local scale = 288 / 720
     local osd_height = mp.get_property_native("osd-height")
     if not scale_with_video and osd_height > 0 then
@@ -1614,13 +1732,13 @@ local remove_page_bindings
 
 local function filter_bindings()
     input.get({
-        prompt = "Filter bindings:",
+        prompt = "过滤绑定：",
         opened = function ()
-            -- This is necessary to close the console if the oneshot
-            -- display_timer expires without typing anything.
+            -- 单次模式的定时器到期时必须关闭控制台，
+            -- 即使什么都没输入。
             searched_text = ""
 
-            -- Must be re-bound to override the console.lua bindings.
+            -- 必须重新绑定才能覆盖 console.lua 的绑定。
             remove_page_bindings()
             bind_scroll()
         end,
@@ -1656,9 +1774,9 @@ local function unbind_search()
 end
 
 local function bind_exit()
-    -- Don't bind in oneshot mode because if ESC is pressed right when the stats
-    -- stop being displayed, it would unintentionally trigger any user-defined
-    -- ESC binding.
+    -- 单次模式不绑定 ESC：否则统计刚好要消失时
+    -- 按下 ESC，会误触发用户自己的
+    -- ESC 绑定。
     if not display_timer.oneshot then
         mp.add_forced_key_binding(o.key_exit, "__forced_" .. o.key_exit, function ()
             process_key_binding(false)
@@ -1684,7 +1802,7 @@ local function update_scroll_bindings(k)
     end
 end
 
--- Add keybindings for every page
+-- 为每个页面注册按键
 add_page_bindings = function()
     local function a(k)
         return function()
@@ -1703,7 +1821,7 @@ add_page_bindings = function()
 end
 
 
--- Remove keybindings for every page
+-- 移除每个页面的按键
 remove_page_bindings = function()
     for k, _ in pairs(pages) do
         mp.remove_key_binding("__forced_"..k)
@@ -1716,14 +1834,14 @@ end
 
 process_key_binding = function(oneshot)
     reset_scroll_offsets()
-    -- Stats are already being displayed
+    -- 统计已经在显示
     if display_timer:is_enabled() then
-        -- Previous and current keys were oneshot -> restart timer
+        -- 前后都是单次模式 → 重新计时
         if display_timer.oneshot and oneshot then
             display_timer:kill()
             print_page(curr_page)
             display_timer:resume()
-        -- Previous and current keys were toggling -> end toggling
+        -- 前后都是切换模式 → 结束切换
         elseif not display_timer.oneshot and not oneshot then
             display_timer:kill()
             cache_recorder_timer:stop()
@@ -1738,14 +1856,14 @@ process_key_binding = function(oneshot)
                 recorder = nil
             end
         end
-    -- No stats are being displayed yet
+    -- 还没有显示统计
     else
         if not oneshot and (o.plot_vsync_jitter or o.plot_vsync_ratio) then
             recorder = record_data(o.skip_frames)
-            -- Rely on the fact that "vsync-ratio" is updated at the same time.
-            -- Using "none" to get a sample any time, even if it does not change.
-            -- Will stop working if "vsync-jitter" property change notification
-            -- changes, but it's fine for an internal script.
+            -- 利用 "vsync-ratio" 同时更新这一点。
+            -- 用 "none" 每次都能取到样本，即使值没变化。
+            -- 如果 "vsync-jitter" 的属性变更通知方式
+            -- 变了就会失效，但内部脚本够用。
             mp.observe_property("vsync-jitter", "none", recorder)
         end
         if not oneshot and o.plot_tonemapping_lut then
@@ -1767,13 +1885,13 @@ process_key_binding = function(oneshot)
 end
 
 
--- Create the timer used for redrawing (toggling) or clearing the screen (oneshot)
--- The duration here is not important and always set in process_key_binding()
+-- 创建用于重绘（切换模式）或清屏（单次模式）的定时器
+-- 这里的时长无关紧要，实际由 process_key_binding() 设置
 display_timer = mp.add_periodic_timer(o.duration,
     function()
         if display_timer.oneshot then
             display_timer:kill() ; clear_screen() ; remove_page_bindings()
-            -- Close the console only if it was opened for searching bindings.
+            -- 只有为搜索绑定打开的控制台才需要关闭。
             if searched_text then
                 input.terminate()
             end
@@ -1783,23 +1901,23 @@ display_timer = mp.add_periodic_timer(o.duration,
     end)
 display_timer:kill()
 
--- Single invocation key binding
+-- 单次调用绑定
 mp.add_key_binding(nil, "display-stats", function() process_key_binding(true) end,
     {repeatable=true})
 
--- Toggling key binding
+-- 切换模式绑定
 mp.add_key_binding(nil, "display-stats-toggle", function() process_key_binding(false) end,
     {repeatable=false})
 
 for k, page in pairs(pages) do
-    -- Single invocation key bindings for specific pages, e.g.:
+    -- 指定页面的单次调用绑定，例如：
     -- "e script-binding stats/display-page-2"
     mp.add_key_binding(nil, "display-page-" .. page.idx, function()
         curr_page = k
         process_key_binding(true)
     end, {repeatable=true})
 
-    -- Key bindings to toggle a specific page, e.g.:
+    -- 切换指定页面的绑定，例如：
     -- "h script-binding stats/display-page-4-toggle".
     mp.add_key_binding(nil, "display-page-" .. page.idx .. "-toggle", function()
         curr_page = k
@@ -1807,7 +1925,7 @@ for k, page in pairs(pages) do
     end, {repeatable=false})
 end
 
--- Reprint stats immediately when VO was reconfigured, only when toggled
+-- 视频输出重建时立即重绘（仅切换模式）
 mp.register_event("video-reconfig",
     function()
         if display_timer:is_enabled() and not display_timer.oneshot then
@@ -1816,13 +1934,13 @@ mp.register_event("video-reconfig",
     end)
 
 if o.bindlist ~= "no" then
-    -- This is a special mode to print key bindings to the terminal,
-    -- Adjust the print format and level to make it print only the key bindings.
+    -- 这是把按键绑定输出到终端的特殊模式，
+    -- 调整输出格式与等级，使其只打印按键绑定。
     mp.set_property("msg-level", "all=no,statusline=status")
     mp.set_property("term-osd", "force")
     mp.set_property_bool("msg-module", false)
     mp.set_property_bool("msg-time", false)
-    -- wait for all other scripts to finish init
+    -- 等其他脚本初始化完成
     mp.add_timeout(0, function()
         if o.bindlist:sub(1, 1) == "-" then
             o.no_ass_b0 = ""
@@ -1831,7 +1949,7 @@ if o.bindlist ~= "no" then
         o.ass_formatting = false
         o.no_ass_indent = " "
         mp.osd_message(keybinding_info(false, true))
-        -- wait for next tick to print status line and flush it without clearing
+        -- 等下一拍再打印状态行，并在不清屏的情况下刷新
         mp.add_timeout(0, function()
             mp.command("flush-status-line no")
             mp.command("quit")
@@ -1849,305 +1967,7 @@ end
 mp.observe_property('current-window-scale', 'native', update_property_cache)
 mp.observe_property('display-names', 'string', update_property_cache)
 mp.observe_property('hwdec-current', 'string', update_property_cache)
--- 自动翻译模块 - 全局替换版（yosh.wang_20260712）（QQ交流群：1097053691）
--- ============================================================
 
-
--- 通用词汇翻译表
-local function auto_translate_text(text)
-    if not text or type(text) ~= "string" then
-        return text
-    end
-    
-    local translations = {
-        -- ==================== 页面标题 ====================
-        ["Default"] = "默认",
-        ["Extended Frame Timings"] = "扩展帧耗时",
-        ["Cache Statistics"] = "缓存统计",
-        ["Active Key Bindings"] = "当前按键绑定",
-        ["Tracks Info"] = "轨道信息",
-        ["Internal Performance Info"] = "内部性能信息",
-        
-        -- ==================== 文件/媒体信息 ====================
-        ["File:"] = "文件：",
-        ["Title:"] = "标题：",
-        ["Duration:"] = "时长：",
-        ["Edition:"] = "版本：",
-        ["Chapter:"] = "章节：",
-        ["Size:"] = "大小：",
-        ["Format/Protocol:"] = "格式/协议：",
-        ["Total Cache:"] = "总缓存：",
-        [" sec)"] = " 秒）",
-        [" sec"] = " 秒",
-        [" fps (specified)"] = " fps（指定）",
-        [" fps (estimated)"] = " fps（估计）",
-        [" fps"] = " fps",
-        [" Hz (specified)"] = " Hz（指定）",
-        [" Hz (estimated)"] = " Hz（估计）",
-        [" Hz"] = " Hz",
-        [" kbps"] = " kbps",
-        [" (specified)"] = "（指定）",
-        [" (estimated)"] = "（估计）",
-        
-        -- ==================== 视频/显示器信息 ====================
-        ["Display:"] = "显示：",
-        ["Context:"] = "渲染后端：",
-        ["A-V:"] = "音视频同步：",
-        ["Refresh Rate:"] = "刷新率：",
-        ["Frame Rate:"] = "帧率：",
-        ["Dropped Frames:"] = "丢帧：",
-        [" (decoder)"] = "（解码器）",
-        [" (output)"] = "（输出）",
-        ["Deinterlacing:"] = "去隔行：",
-        ["Resolution:"] = "分辨率：",
-        ["Output Resolution:"] = "输出分辨率：",
-        ["Format:"] = "格式：",
-        ["Levels:"] = "色彩范围：",
-        ["Chroma Loc:"] = "色度位置：",
-        ["Colormatrix:"] = "色彩矩阵：",
-        ["Primaries:"] = "色域基色：",
-        ["Transfer:"] = "传输函数：",
-        ["Bitrate:"] = "码率：",
-        ["Filters:"] = "滤镜：",
-        ["HW:"] = "硬解：",
-        ["AO:"] = "音频输出：",
-        ["Device:"] = "设备：",
-        ["AO Volume:"] = "音量：",
-        [" (Muted)"] = "（静音）",
-        ["A-V delay:"] = "音视频延迟：",
-        ["Channels:"] = "声道数：",
-        ["Sample Rate:"] = "采样率：",
-        
-        -- ==================== 显示同步 ====================
-        ["DS:"] = "显示同步：",
-        ["Mistimed:"] = "错时帧：",
-        ["Delayed:"] = "延迟帧：",
-        ["VSync Ratio:"] = "垂直同步比率：",
-        ["VSync Jitter:"] = "垂直同步抖动：",
-        
-        -- ==================== HDR相关 ====================
-        ["Mastering display:"] = "母版显示：",
-        ["MaxCLL:"] = "最大内容亮度：",
-        ["MaxFALL:"] = "最大帧平均亮度：",
-        ["MaxRGB:"] = "最大RGB：",
-        ["Avg:"] = "平均：",
-        [" cd/m²"] = " cd/m²",
-        ["HDR10:"] = "HDR10：",
-        ["HDR10+:"] = "HDR10+：",
-        ["PQ(Y):"] = "PQ(Y)：",
-        ["Max:"] = "最大：",
-        -- ["in"] = "使用",   -- 不启用：模糊匹配会破坏包含 "in" 的英文单词（Container, Vision 等）
-        
-        -- ==================== 视频轨道信息 ====================
-        ["Video:"] = "视频：",
-        ["Audio:"] = "音频：",
-        ["Image:"] = "图像：",
-        ["Subtitle:"] = "字幕：",
-        ["Frame:"] = "帧：",
-        ["Picture Type:"] = "画面类型：",
-        ["Interlaced"] = "隔行扫描",
-        ["Timecode:"] = "时间码：",
-        ["GOP"] = "GOP",
-        ["SMPTE"] = "SMPTE",
-        ["Estimated SMPTE"] = "估计 SMPTE",
-        ["GOP Timecode:"] = "GOP 时间码：",
-        ["SMPTE Timecode:"] = "SMPTE 时间码：",
-        ["Estimated SMPTE Timecode:"] = "估计 SMPTE 时间码：",
-        
-        -- ==================== 帧耗时页面 ====================
-        
-        -- ==================== 缓存信息 ====================
-        ["Cache Info:"] = "缓存信息：",
-        ["Packet Queue:"] = "数据包队列：",
-        ["Readahead:"] = "预读：",
-        ["State:"] = "状态：",
-        ["reading"] = "读取中",
-        ["eof"] = "文件尾",
-        ["underrun"] = "缓存不足",
-        ["inactive"] = "空闲",
-        ["seeking"] = "定位中",
-        ["Speed:"] = "速度：",
-        ["Total RAM:"] = "总内存：",
-        ["Forward RAM:"] = "前向缓存：",
-        ["Disk Cache:"] = "磁盘缓存：",
-        ["(disabled)"] = "（已禁用）",
-        ["Media Seeks:"] = "媒体跳转：",
-        ["Stream Seeks:"] = "流跳转：",
-        ["Ranges:"] = "范围：",
-        ["Start Cached:"] = "起始已缓存：",
-        ["End Cached:"] = "结束已缓存：",
-        ["Range "] = "范围 ",
-        ["Unavailable."] = "不可用。",
-        ["yes"] = "是",
-        ["no"] = "否",
-        
-        -- ==================== 按键绑定页面 ====================
-        ["script: "] = "脚本：",
-        ["[unknown]"] = "[未知]",
-        ["Filter bindings:"] = "过滤绑定：",
-        
-        -- ==================== 轨道信息页面 ====================
-        ["ID:"] = "ID：",
-        ["Demuxer ID:"] = "解复用器 ID：",
-        ["Program ID:"] = "节目ID：",
-        ["FFmpeg Index:"] = "FFmpeg索引：",
-        ["Flags:"] = "标志：",
-        ["Codec:"] = "编解码器：",
-        ["Language:"] = "语言：",
-        ["Channel Layout:"] = "声道布局：",
-        ["HLS Bitrate:"] = "HLS 码率：",
-        ["Rotation:"] = "旋转：",
-        ["Pixel Aspect Ratio:"] = "像素宽高比：",
-        ["Replay Gain:"] = "重放增益：",
-        ["Track:"] = "音轨：",
-        ["Album:"] = "专辑：",
-        ["Gain:"] = "增益：",
-        ["Peak:"] = "峰值：",
-        ["Dolby Vision:"] = "杜比视界：",
-        ["Profile:"] = "配置文件：",
-        ["Level:"] = "级别：",
-        ["default"] = "默认",
-        ["forced"] = "强制",
-        ["dependent"] = "依赖",
-        ["visual-impaired"] = "视觉障碍",
-        ["hearing-impaired"] = "听觉障碍",
-        ["original"] = "原始",
-        ["commentary"] = "解说",
-        ["albumart"] = "专辑封面",
-        ["external"] = "外部",
-        
-        -- ==================== 滤镜相关 ====================
-        [" (disabled)"] = "（已禁用）",
-
-        -- ==================== 命令子词（按键绑定搜索） ====================
-        ["seek"] = "跳转",
-        ["playlist"] = "播放列表",
-        ["cycle"] = "循环",
-        ["set"] = "设置",
-        ["add"] = "添加",
-        ["toggle"] = "切换",
-        ["change_list"] = "变更列表",
-        ["script_binding"] = "脚本绑定",
-        ["script_message_to"] = "脚本消息至",
-    }
-    
-    -- 精确匹配
-    local result = translations[text]
-    if result then
-        return result
-    end
-    
-    
-    return text
-end
-
--- ==================== 性能标签翻译 ====================
-local perf_translations = {
-    ["poll-time"] = "轮询耗时",
-    ["demuxer/thread"] = "解封装/线程",
-    ["main/iterations"] = "主循环/单次",
-    ["main/thread"] = "主循环/线程",
-    ["osd/osd-render/cpu"] = "OSD渲染/CPU",
-    ["osd/osd-render/time"] = "OSD渲染/总时",
-    ["osd/sub-render/cpu"] = "字幕渲染/CPU",
-    ["osd/sub-render/time"] = "字幕渲染/总时",
-    ["vo/iterations"] = "视频输出/单次",
-    ["vo/video-draw/cpu"] = "视频输出/绘制/CPU",
-    ["vo/video-draw/time"] = "视频输出/绘制/总时",
-    ["vo/video-flip/cpu"] = "视频输出/提交/CPU",
-    ["vo/video-flip/time"] = "视频输出/提交/总时",
-}
-
--- 保存原始函数
-local original_append_general_perfdata = append_general_perfdata
-
--- 重写性能数据函数
-append_general_perfdata = function(s)
-    for i, data in ipairs(mp.get_property_native("perf-info") or {}) do
-        local display_name = perf_translations[data.name]
-        if not display_name and data.name:match("^script/") then
-            display_name = data.name:gsub("^script/", "脚本/")
-        elseif not display_name then
-            display_name = data.name
-        end
-        
-        append(s, data.text or data.value, {prefix="["..tostring(i).."] "..display_name.."："})
-
-        if o.plot_perfdata and o.use_ass and data.value then
-            local buf = perf_buffers[data.name]
-            if not buf then
-                buf = {0, pos = 1, len = 50, max = 0}
-                perf_buffers[data.name] = buf
-            end
-            graph_add_value(buf, data.value)
-            s[#s] = s[#s] .. generate_graph(buf, buf.pos, buf.len, buf.max, nil, 0.8, 1)
-        end
-    end
-end
-
--- ==================== 重写核心翻译函数 ====================
--- 保存原始函数
-local original_append = append
-local original_append_property = append_property
-local original_scroll_hint = scroll_hint
-local original_cmd_subject = cmd_subject
-
--- 重写 append
-append = function(s, str, attr)
-    if str and type(str) == "string" then
-        str = auto_translate_text(str)
-    end
-    if attr then
-        if attr.prefix then
-            attr.prefix = auto_translate_text(attr.prefix)
-        end
-        if attr.suffix then
-            attr.suffix = auto_translate_text(attr.suffix)
-        end
-    end
-    return original_append(s, str, attr)
-end
-
--- 重写 append_property
-append_property = function(s, prop, attr, excluded, cached)
-    if attr then
-        if attr.prefix then
-            attr.prefix = auto_translate_text(attr.prefix)
-        end
-        if attr.suffix then
-            attr.suffix = auto_translate_text(attr.suffix)
-        end
-    end
-    return original_append_property(s, prop, attr, excluded, cached)
-end
-
--- 重写 scroll_hint（整句中文化，避免拆段导致「使用 /」语法破碎）
-scroll_hint = function(search)
-    local hint = format("（提示：用 %s/%s", o.key_scroll_up, o.key_scroll_down)
-    if search then
-        hint = hint .. " 滚动，按 " .. o.key_search .. " 搜索"
-    end
-    hint = hint .. "）"
-    if not o.use_ass then return " " .. hint end
-    return format(" {\\fs%s}%s{\\fs%s}", font_size * 0.66, hint, font_size)
-end
-
--- 重写 cmd_subject
-cmd_subject = function(cmd)
-    local result = original_cmd_subject(cmd)
-    return auto_translate_text(result)
-end
-
--- ==================== 翻译页面描述 ====================
-for k, page in pairs(pages) do
-    if page.desc then
-        page.desc = auto_translate_text(page.desc)
-    end
-end
-
--- ============================================================
--- 自动翻译模块结束
--- ============================================================
 
 
 
@@ -2613,7 +2433,7 @@ local function apply_gpu_usage_map(gpu_map, fmt)
     if not gpu_map then return false end
     local updated = false
     -- 按 LUID 分组，收集每个 LUID 的引擎数据
-    local luid_data = {}      -- luid -> { max_val=0, val_3d=0, has_3d=false, eng_types={} }
+    local luid_data = {}      -- luid 映射 → { max_val=0, val_3d=0, has_3d=false, eng_types={} }
     local luid_order = {}     -- 保持 LUID 出现顺序
     for engine_name, util in pairs(gpu_map) do
         local luid = engine_name:match("luid_(0x%x+_0x%x+)") or "unknown"
@@ -2754,7 +2574,7 @@ local function apply_gpu_usage_map(gpu_map, fmt)
 end
 
 -- 运行时记忆本机可用的采集方案（每台机器各自学习，失败自动退回完整链）
-local cpu_ok_method = nil   -- nil / "cim" / "typeperf" / "powershell"
+local cpu_ok_method = nil   -- 取值：nil / "cim" / "typeperf" / "powershell"
 local gpu_ok_method = nil   -- nil / "cim" / "typeperf" / "powershell"（nvidia-smi 之外的回退方案）
 
 -- 获取 CPU 占用率
@@ -3016,7 +2836,9 @@ end
 -- 修改 add_file
 local original_add_file = add_file
 add_file = function(s, print_cache, print_tags)
+    path_pending = true
     original_add_file(s, print_cache, print_tags)
+    path_pending = false
 
     if not hw_detected then
         detect_hardware()
@@ -3094,138 +2916,3 @@ mp.register_event("file-loaded", function()
     end
     update_counter = 0
 end)
-
--- ============================================================
--- 系统统计模块结束
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
-
-
--- ============================================================
--- 最终渲染出口翻译（非侵入：原版一行不改）
--- 背景：原版 append_perfdata 用 s[#s+1] = format(...) 直写 OSD 表，
--- 不经 append，故帧分组名(VO/Decoder/GPU/Renderer)、渲染阶段
--- (scale/shader/blit/PP)、标题 Frame Timings:、(last/average/peak μs)、
--- Total 无法被 append 猴子补丁捕获，必须在最终显示出口统一翻译。
---
--- 关键约束（踩过的坑，勿改回）：
---   1) Lua 字符串 pattern 不支持 | 选择分支，故每个标签必须单独枚举。
---   2) \b / \h 不能写成 "\b"（那是退格符），必须用 [\\] 匹配字面反斜杠。
---   3) ASS 模式下 o.nl="\N"、o.indent="\h\h\h\h\h"，监控行形如
---      \N\h\h\h\h\hGPU: 37% —— 简化视图帧分组名必须用“后接 \N 或行尾”
---      作边界，否则监控的 "GPU:" 会被误翻成 "显卡:"。
---   4) 只替换文字，保留原版全部 ASS 字体/字号/粗体标记（字体一致）。
--- ============================================================
-local function final_translate_ass(text)
-    if not text or type(text) ~= "string" then
-        return text
-    end
-
-    -- ① 帧耗时页标题（粗体）
-    text = text:gsub("(%{[\\]b1%})Frame Timings:(%{[\\]b0%})", "%1帧耗时：%2")
-    -- ② 副标题
-    text = text:gsub("%(last/average/peak μs%)", "（最新/平均/峰值 微秒）")
-
-    -- ③ 帧分组名（扩展帧耗时页，粗体包裹，唯一安全上下文）
-    --    注意：mpv 的 vo-passes 键为小写 decoder/gpu/renderer/vo，原版做首字母
-    --    大写后实际形如 Decoder/Gpu/Renderer/Vo，故用大小写无关的字符类匹配。
-    text = text:gsub("(%{[\\]b1%})[Vv][Oo](%{[\\]b0%})", "%1输出%2")
-    text = text:gsub("(%{[\\]b1%})[Dd]ecoder(%{[\\]b0%})", "%1解码%2")
-    text = text:gsub("(%{[\\]b1%})[Gg][Pp][Uu](%{[\\]b0%})", "%1显卡%2")
-    text = text:gsub("(%{[\\]b1%})[Rr]enderer(%{[\\]b0%})", "%1渲染%2")
-    --    mpv 0.41 起 vo-passes 分组改为 fresh / redraw（新帧 / 重绘）
-    text = text:gsub("(%{[\\]b1%})[Ff]resh(%{[\\]b0%})", "%1新帧%2")
-    text = text:gsub("(%{[\\]b1%})[Rr]edraw(%{[\\]b0%})", "%1重绘%2")
-
-    -- ③b 滤镜列表标签（vf / af 共用）
-    --     append_filters 用 s[#s+1] = ... bold(prefix) 直写 OSD 表，不经过 append，
-    --     故 append 猴子补丁抓不到，必须走最终出口翻译（原因同帧耗时页）。
-    text = text:gsub("(%{[\\]b1%})Filters:(%{[\\]b0%})", "%1滤镜：%2")
-
-    -- ④ 合计行 Total（粗体）
-    text = text:gsub("(%{[\\]b1%})Total(%{[\\]b0%})", "%1总计%2")
-
-    -- ⑤ 渲染阶段描述（旧版 mpv 的 scale/shader/blit/PP）
-    --    必须带“后接 \N 或行尾”边界：滤镜列表换行显示时滤镜名前同样有 \h，
-    --    若无边界会把 --vf=scale=1920:1080 误翻成“缩放”。
-    text = text:gsub("([\\h]+)scale([\\]N)", "%1缩放%2")
-    text = text:gsub("([\\h]+)shader([\\]N)", "%1着色%2")
-    text = text:gsub("([\\h]+)blit([\\]N)", "%1位块%2")
-    text = text:gsub("([\\h]+)PP([\\]N)", "%1后期%2")
-    text = text:gsub("([\\h]+)scale$", "%1缩放")
-    text = text:gsub("([\\h]+)shader$", "%1着色")
-    text = text:gsub("([\\h]+)blit$", "%1位块")
-    text = text:gsub("([\\h]+)PP$", "%1后期")
-
-    -- ⑥ 简化视图帧分组名：后接 \N（下一行 o.nl）或行尾
-    --    带边界是为了避开监控行 \N\h\h\h\h\hGPU: 37% 中的 "GPU:"
-    text = text:gsub("([\\h]+)[Vv][Oo]([\\]N)", "%1输出%2")
-    text = text:gsub("([\\h]+)[Dd]ecoder([\\]N)", "%1解码%2")
-    text = text:gsub("([\\h]+)[Gg][Pp][Uu]([\\]N)", "%1显卡%2")
-    text = text:gsub("([\\h]+)[Rr]enderer([\\]N)", "%1渲染%2")
-    text = text:gsub("([\\h]+)[Ff]resh([\\]N)", "%1新帧%2")
-    text = text:gsub("([\\h]+)[Rr]edraw([\\]N)", "%1重绘%2")
-    text = text:gsub("([\\h]+)[Vv][Oo]$", "%1输出")
-    text = text:gsub("([\\h]+)[Dd]ecoder$", "%1解码")
-    text = text:gsub("([\\h]+)[Gg][Pp][Uu]$", "%1显卡")
-    text = text:gsub("([\\h]+)[Rr]enderer$", "%1渲染")
-    text = text:gsub("([\\h]+)[Ff]resh$", "%1新帧")
-    text = text:gsub("([\\h]+)[Rr]edraw$", "%1重绘")
-
-    return text
-end
-
--- 最终显示出口统一翻译（非侵入）
--- 注：原版 o.persistent_overlay 默认 false，主显示走 mp.osd_message，
--- 故 set_osd_ass 与 osd_message 两个出口都要包裹，覆盖全部显示路径。
-local original_set_osd_ass = mp.set_osd_ass
-mp.set_osd_ass = function(a, b, c)
-    return original_set_osd_ass(a, b, final_translate_ass(c))
-end
-local original_osd_message = mp.osd_message
-mp.osd_message = function(text, dur)
-    return original_osd_message(final_translate_ass(text), dur)
-end
-
-G_final_translate_ass = final_translate_ass
